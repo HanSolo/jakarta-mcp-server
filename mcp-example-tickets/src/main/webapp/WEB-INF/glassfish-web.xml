@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Payara/GlassFish deployment descriptor: serve the app at the root so the MCP endpoint is http://host:8080/mcp -->
+<glassfish-web-app>
+    <context-root>/</context-root>
+</glassfish-web-app>

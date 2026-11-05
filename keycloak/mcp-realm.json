@@ -8,25 +8,37 @@
       "name": "mcp:tools",
       "description": "Call MCP tools, read resources and get prompts",
       "protocol": "openid-connect",
-      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
     },
     {
       "name": "files",
       "description": "Full access to files (satisfies files:read)",
       "protocol": "openid-connect",
-      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
     },
     {
       "name": "files:read",
       "description": "Read access to files",
       "protocol": "openid-connect",
-      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
     },
     {
       "name": "mcp-audience",
       "description": "Binds access tokens to the MCP server (RFC 8707): adds the resource identifier to aud",
       "protocol": "openid-connect",
-      "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
       "protocolMappers": [
         {
           "name": "mcp-resource-audience",
@@ -41,6 +53,24 @@
           }
         }
       ]
+    },
+    {
+      "name": "tickets:read",
+      "description": "Read and search support tickets",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "tickets:write",
+      "description": "Create and close support tickets",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
     }
   ],
   "clients": [
@@ -54,8 +84,16 @@
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "defaultClientScopes": ["mcp-audience"],
-      "optionalClientScopes": ["mcp:tools", "files", "files:read"]
+      "defaultClientScopes": [
+        "mcp-audience"
+      ],
+      "optionalClientScopes": [
+        "mcp:tools",
+        "files",
+        "files:read",
+        "tickets:read",
+        "tickets:write"
+      ]
     },
     {
       "clientId": "mcp-no-audience",
@@ -68,7 +106,11 @@
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "defaultClientScopes": [],
-      "optionalClientScopes": ["mcp:tools", "files", "files:read"]
+      "optionalClientScopes": [
+        "mcp:tools",
+        "files",
+        "files:read"
+      ]
     },
     {
       "clientId": "mcp-cli",
@@ -78,8 +120,16 @@
       "publicClient": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": true,
-      "defaultClientScopes": ["mcp-audience"],
-      "optionalClientScopes": ["mcp:tools", "files", "files:read"]
+      "defaultClientScopes": [
+        "mcp-audience"
+      ],
+      "optionalClientScopes": [
+        "mcp:tools",
+        "files",
+        "files:read",
+        "tickets:read",
+        "tickets:write"
+      ]
     }
   ],
   "users": [
@@ -90,7 +140,13 @@
       "email": "alice@example.com",
       "firstName": "Alice",
       "lastName": "Example",
-      "credentials": [{"type": "password", "value": "alice", "temporary": false}]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ]
     }
   ]
 }

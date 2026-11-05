@@ -82,7 +82,12 @@ final class ServerFixture {
 
     /** Creates (but does not start) a container with the example WAR deployed at the context root (the file is named ROOT.war, which all three servers map to "/"). */
     static GenericContainer<?> create(Map<String, String> environment, boolean reachHost) {
-        Path war = Path.of(System.getProperty("mcp.war", "../mcp-example/target/mcp-example.war")).toAbsolutePath().normalize();
+        return create(Path.of(System.getProperty("mcp.war", "../mcp-example/target/mcp-example.war")), environment, reachHost);
+    }
+
+    /** Same, for any WAR (the tickets example, say). */
+    static GenericContainer<?> create(Path warPath, Map<String, String> environment, boolean reachHost) {
+        Path war = warPath.toAbsolutePath().normalize();
         if (!Files.isRegularFile(war)) {
             throw new IllegalStateException("WAR not found at " + war + ": run the build from the parent project so mcp-example is packaged first");
         }

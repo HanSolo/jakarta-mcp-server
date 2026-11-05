@@ -1,0 +1,14 @@
+# Swaps the example server for the support-ticket example (JPA + scopes). Build first: mvn -DskipTests package
+#
+#   docker compose -f keycloak/docker-compose.yml -f keycloak/docker-compose.tickets.yml up
+#   TOKEN=$(curl -s http://localhost:8180/realms/mcp/protocol/openid-connect/token \
+#     -d grant_type=password -d client_id=mcp-cli -d username=alice -d password=alice \
+#     -d "scope=mcp:tools tickets:read tickets:write" | jq -r .access_token)
+#
+# Ask for fewer scopes to see the tool list shrink: without tickets:write there is no create_ticket or close_ticket.
+services:
+  mcp:
+    volumes:
+      - ../mcp-example-tickets/target/mcp-example-tickets.war:/opt/payara/deployments/ROOT.war:ro
+    environment:
+      MCP_AUTH_SCOPES_SUPPORTED: mcp:tools,tickets:read,tickets:write
