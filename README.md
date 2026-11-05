@@ -11,7 +11,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 - **What has been run:** `mvn verify` of the original server (discover, tools/list, tools/call, MRTR) passed on the author's machine, and the server was exercised with MCP Inspector (`--protocol-era modern`) and curl against Payara Micro.
 - **Verified on the author's machine (macOS, Docker Desktop 29, Payara Micro 7.2026.10 Build 18 via `payara/micro:latest`, Keycloak 26.4):** `mvn clean verify` passed with 145 unit tests and 46 integration tests (30 in `McpServerIT` at the time, 34 now with the completion tests, 9 in `McpAuthServerIT` with a test issuer, 7 in `McpKeycloakIT` with a real Keycloak). That covers CDI scanning of `@McpTool` / `@McpResource` / `@McpPrompt` beans, the well-known metadata endpoint, 401/403 challenges, audience binding, MRTR and the `eu.hansolo.mcp` rename.
 - **Also passed on WildFly 42.0.0.Final and Open Liberty** (`-Dmcp.server=wildfly` / `liberty`; reported by the user, logs not shared with the author).
-- **Written but never run (tickets example):** `mcp-example-tickets` compiles and its 13 unit tests pass in the author's sandbox against a fake store, but the JPA store, `persistence.xml`, the embedded H2 and `McpTicketsKeycloakIT` have not been executed anywhere. JPA behaviour on WildFly (Hibernate) and Open Liberty (EclipseLink) is untested, and WildFly ships its own H2 module that may clash with the bundled driver. Expect to fix something on the first run.
+- **Tickets example:** `mvn clean verify` passes on Payara with Keycloak (178 unit tests, 8 tickets integration tests). Not yet run on WildFly or Open Liberty; WildFly ships its own H2 module, which may clash with the H2 driver bundled in the WAR.
 - **Not yet run:** the Docker Compose setup, the CI workflow and the `release` profile. After renaming packages or moving files, always build with `mvn clean verify`: stale classes in `target/` end up in the WAR and the deployment fails with a `ClassNotFoundException`.
 - **Unverified:** behaviour with a real identity provider (see the Keycloak item above; any other provider is untested). `latest` is a moving tag: pin the image with `-Dmcp.image=payara/micro:<tag>` once you have checked the tag name on Docker Hub.
 - **2026-07-28 clients only.** Clients that still require the `initialize` handshake (2025-11-25 and earlier) get HTTP 400 naming the supported version.
@@ -23,7 +23,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 | --- | --- |
 | `mcp-jakarta` | Library JAR: tool, resource and prompt APIs (`@McpTool`, `@McpResource`, `@McpPrompt` and the matching handler interfaces), protocol handling (`McpRequestHandler`, container-independent), OAuth resource-server code (`auth`), JAX-RS resources, CDI wiring |
 | `mcp-example` | WAR deployed at the context root: annotated tools (`echo`, `add`, `repeat`), a handler-style tool (`greet`, multi round-trip), a resource (`config://server/info`), a template (`greeting://{name}`) and a prompt (`summarize`) |
-| `mcp-example-tickets` | A realistic WAR: a support-ticket service. JPA (embedded H2, resource-local) behind a `TicketStore` interface; tools `search_tickets` (limit/offset), `get_ticket`, `create_ticket`, `close_ticket` (asks the user first via multi round-trip); resources `ticket://{id}` and `ticket://stats`; prompt `triage`; completion of ticket numbers; scopes `tickets:read` / `tickets:write`. 120 sample tickets are seeded at startup. **Needs authentication**, because its primitives declare scopes. Try it with `keycloak/docker-compose.tickets.yml` |
+| `mcp-example-tickets` | A realistic example: a support-ticket service with a database, scopes and a confirmation step (see [The tickets example](#the-tickets-example)). Needs authentication |
 | `mcp-it` | Integration tests: starts the example WAR in a Payara Micro, WildFly or Open Liberty container with Testcontainers |
 
 ## Supported servers
@@ -88,6 +88,44 @@ curl -s http://localhost:8080/mcp \
   -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/call' -H 'Mcp-Name: echo' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hi"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
+
+## The tickets example
+
+`mcp-example` is a hello-world. `mcp-example-tickets` shows what a real service looks like: an IT help desk that an AI assistant can search, read, file tickets in and close, with the permissions enforced by your identity provider.
+
+**What an assistant can do with it**
+
+| | Name | What it does | Needs scope |
+| --- | --- | --- | --- |
+| Tool | `search_tickets` | Find tickets by text and status, 20 per page (`limit` / `offset`) | `tickets:read` |
+| Tool | `get_ticket` | Show one ticket | `tickets:read` |
+| Tool | `create_ticket` | File a ticket, recorded under the caller's identity | `tickets:write` |
+| Tool | `close_ticket` | Close a ticket, **after the user confirms** | `tickets:write` |
+| Resource | `ticket://{id}`, `ticket://stats` | A ticket as JSON, and open/closed counts | `tickets:read` |
+| Prompt | `triage` | "Assess this ticket and suggest next steps" | `tickets:read` |
+| Completion | ticket numbers | Suggests numbers while the user types | `tickets:read` |
+
+A token with only `tickets:read` sees just the read tools. Without any ticket scope the tool list is empty. 120 sample tickets are created at startup in an in-memory H2 database, so there is nothing to set up.
+
+**Try it** (needs Docker; builds the WAR, starts Keycloak and the server):
+
+```
+mvn -DskipTests package
+docker compose -f keycloak/docker-compose.yml -f keycloak/docker-compose.tickets.yml up
+TOKEN=$(curl -s http://localhost:8180/realms/mcp/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=mcp-cli -d username=alice -d password=alice \
+  -d "scope=mcp:tools tickets:read tickets:write" | jq -r .access_token)
+```
+
+Then use `$TOKEN` as in the Keycloak section below (MCP Inspector or curl). Ask for fewer scopes to watch the tool list shrink.
+
+**Where to look in the code**
+
+- `TicketTools`, `TicketResources`, `TicketPrompts`, `TicketCompletions`: the whole MCP side, plain annotated classes with `@McpTool(scopes = ...)` and friends.
+- `TicketStore` / `JpaTicketStore`: the database side. The MCP classes only see the interface, which is why the unit tests run without a database.
+- `close_ticket`: the confirmation flow. The first call returns "input required"; the client asks the user and repeats the call with the answer. The server keeps nothing in between. A client that cannot ask the user gets an error, never a silent close.
+
+**Simplifications to know about:** the database is embedded H2 and the persistence unit is resource-local, so the example runs on any server without configuring a datasource. A real application would use the server's JTA datasource. Ticket ids come from a sequence rather than `IDENTITY`, because EclipseLink's `IDENTITY` DDL is rejected by H2 2.x.
 
 ## Writing tools
 
