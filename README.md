@@ -48,7 +48,7 @@ The code uses only Jakarta EE 11 Web Profile APIs and has now run on three serve
    </dependency>
    ```
 
-   Not yet published to Maven Central: run `mvn install` in this project first. The `release` profile of `mcp-jakarta` is prepared for publishing but has never been run.
+   Not yet published to Maven Central: run `mvn install` in this project first. The `release` profile (see below) is prepared for publishing but has never been run.
 2. Register the endpoint classes in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication, `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. OAuth metadata discovery (RFC 9728) needs the application at the host root.
 3. Add `@McpTool`, `@McpResource` and `@McpPrompt` methods to your CDI beans (any bean-defining scope; with `bean-discovery-mode="annotated"` the class needs a scope annotation).
 4. Configure through system properties or environment variables (see the table below). Authentication is off by default.
@@ -242,6 +242,18 @@ Use `$TOKEN` as `Authorization: Bearer ...` (MCP Inspector: custom headers, with
 The two things that go wrong with a real issuer are the issuer URL and the audience. Keycloak puts the URL it was *told* it lives at (`KC_HOSTNAME`) into `iss`, regardless of how a client reached it; the MCP container reaches it by a different name (`keycloak:8080`) and therefore needs `mcp.auth.jwks-uri` set separately from `mcp.auth.issuer`. And Keycloak does not add your server to `aud` by itself: the `mcp-audience` client scope does that, and a client without it gets 401 `invalid_token`. `McpKeycloakIT` checks both, plus the 401 and 403 challenges, with a Keycloak container (`-Dkeycloak.image=...` overrides the image, default `quay.io/keycloak/keycloak:26.4`).
 
 Not covered: the browser-based authorization-code flow and dynamic client registration (RFC 7591), which MCP clients such as Inspector use to register themselves. Keycloak restricts anonymous registration by policy; whether a given client completes the flow against this server has not been tested.
+
+## Releasing to Maven Central
+
+For maintainers. Uses the Central Portal; the namespace `eu.hansolo` must be verified for your account.
+
+1. A server `central` in `~/.m2/settings.xml` holding a portal user token, and a GPG key whose public half is on a keyserver.
+2. Set a release version (`mvn versions:set -DnewVersion=0.1.0`), commit, tag.
+3. `mvn -Prelease clean deploy` signs and uploads the parent POM and `mcp-jakarta` (jar, sources, Javadoc). The examples and `mcp-it` are skipped.
+4. The bundle is validated but not published: open the portal, check it and press Publish. Releases cannot be deleted afterwards. Set `autoPublish` to `true` in the root `pom.xml` to skip this step.
+5. Set the next `-SNAPSHOT` version.
+
+The profile has never been run. Check the `central-publishing-maven-plugin` version in the root `pom.xml` against the current release first.
 
 ## Configuration
 

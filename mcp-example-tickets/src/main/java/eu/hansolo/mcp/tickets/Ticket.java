@@ -17,6 +17,7 @@ import java.time.Instant;
 @Table(name = "tickets")
 public class Ticket {
 
+    // A sequence rather than IDENTITY: EclipseLink writes "BIGINT IDENTITY", which H2 2.x rejects, while sequences work with every provider.
     @Id
     @SequenceGenerator(name = "ticket_seq", sequenceName = "ticket_seq", allocationSize = 1)
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "ticket_seq")

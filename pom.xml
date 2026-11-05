@@ -155,4 +155,50 @@
             </plugins>
         </pluginManagement>
     </build>
+    <profiles>
+        <!--
+          Publishing to Maven Central through the Central Portal:  mvn -Prelease clean deploy
+          Needs a server "central" in ~/.m2/settings.xml (portal user token) and a GPG key. The upload is not published automatically:
+          check the validated bundle in the portal and press Publish (set autoPublish to true to skip that). Only mcp-jakarta and this
+          parent POM are published; the example and test modules opt out in their own release profile. Never exercised by the author.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <!-- lets a CI job supply the passphrase through MAVEN_GPG_PASSPHRASE; locally gpg-agent still asks -->
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.8.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>false</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
