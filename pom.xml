@@ -5,7 +5,7 @@
     <!-- groupId and Java packages follow the eu.hansolo namespace. -->
     <groupId>eu.hansolo.mcp</groupId>
     <artifactId>jakarta-mcp-server</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
     <packaging>pom</packaging>
 
     <name>Jakarta MCP Server (parent)</name>
@@ -177,13 +177,6 @@
                                 <goals>
                                     <goal>sign</goal>
                                 </goals>
-                                <configuration>
-                                    <!-- lets a CI job supply the passphrase through MAVEN_GPG_PASSPHRASE; locally gpg-agent still asks -->
-                                    <gpgArguments>
-                                        <arg>--pinentry-mode</arg>
-                                        <arg>loopback</arg>
-                                    </gpgArguments>
-                                </configuration>
                             </execution>
                         </executions>
                     </plugin>
