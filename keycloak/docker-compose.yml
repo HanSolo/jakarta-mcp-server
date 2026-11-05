@@ -1,0 +1,39 @@
+# Keycloak + the example server, wired for OAuth, for trying things by hand. Build first: mvn -DskipTests package
+#
+#   docker compose -f keycloak/docker-compose.yml up
+#   TOKEN=$(curl -s http://localhost:8180/realms/mcp/protocol/openid-connect/token \
+#     -d grant_type=password -d client_id=mcp-cli -d username=alice -d password=alice -d scope=mcp:tools | jq -r .access_token)
+#   curl -i http://localhost:8080/mcp -H "Authorization: Bearer $TOKEN" ...   (see the README for the headers and body)
+#
+# Development only: HTTP, start-dev mode, throwaway passwords. Keycloak's own admin console is at http://localhost:8180 (admin / admin).
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # The issuer in every token. Tokens obtained on the host (localhost:8180) and keys fetched by the MCP container (keycloak:8080) must agree on it.
+      KC_HOSTNAME: http://localhost:8180
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./mcp-realm.json:/opt/keycloak/data/import/mcp-realm.json:ro
+
+  mcp:
+    image: payara/micro:latest
+    depends_on:
+      - keycloak
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../mcp-example/target/mcp-example.war:/opt/payara/deployments/ROOT.war:ro
+    environment:
+      MCP_AUTH_ENABLED: "true"
+      MCP_AUTH_RESOURCE: http://localhost:8080/mcp
+      MCP_AUTH_ISSUER: http://localhost:8180/realms/mcp
+      MCP_AUTH_JWKS_URI: http://keycloak:8080/realms/mcp/protocol/openid-connect/certs
+      MCP_AUTH_JWKS_ALLOW_HTTP: "true"
+      MCP_AUTH_AUTHORIZATION_SERVERS: http://localhost:8180/realms/mcp
+      MCP_AUTH_SCOPES_SUPPORTED: mcp:tools
+      MCP_AUTH_REQUIRED_SCOPES: mcp:tools

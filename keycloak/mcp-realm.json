@@ -1,0 +1,96 @@
+{
+  "realm": "mcp",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 600,
+  "clientScopes": [
+    {
+      "name": "mcp:tools",
+      "description": "Call MCP tools, read resources and get prompts",
+      "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}
+    },
+    {
+      "name": "files",
+      "description": "Full access to files (satisfies files:read)",
+      "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}
+    },
+    {
+      "name": "files:read",
+      "description": "Read access to files",
+      "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}
+    },
+    {
+      "name": "mcp-audience",
+      "description": "Binds access tokens to the MCP server (RFC 8707): adds the resource identifier to aud",
+      "protocol": "openid-connect",
+      "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+      "protocolMappers": [
+        {
+          "name": "mcp-resource-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "http://localhost:8080/mcp",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "mcp-test",
+      "name": "Integration tests (client credentials, audience bound)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "mcp-test-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "defaultClientScopes": ["mcp-audience"],
+      "optionalClientScopes": ["mcp:tools", "files", "files:read"]
+    },
+    {
+      "clientId": "mcp-no-audience",
+      "name": "Integration tests (tokens NOT bound to the MCP server)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "mcp-test-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": ["mcp:tools", "files", "files:read"]
+    },
+    {
+      "clientId": "mcp-cli",
+      "name": "Manual testing with curl (password grant, development only)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "defaultClientScopes": ["mcp-audience"],
+      "optionalClientScopes": ["mcp:tools", "files", "files:read"]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "alice@example.com",
+      "firstName": "Alice",
+      "lastName": "Example",
+      "credentials": [{"type": "password", "value": "alice", "temporary": false}]
+    }
+  ]
+}

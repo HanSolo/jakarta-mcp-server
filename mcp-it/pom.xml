@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.hansolo.mcp</groupId>
+        <artifactId>jakarta-mcp-server</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>mcp-it</artifactId>
+    <packaging>jar</packaging>
+    <name>Jakarta MCP Server (integration tests)</name>
+    <description>Deploys the example WAR into a Payara Micro, WildFly or Open Liberty container with Testcontainers and talks to it over HTTP. Skipped automatically when Docker is not available.</description>
+
+    <dependencies>
+        <!-- Declared only so the reactor builds the WAR first; its classes are not needed on the test classpath. -->
+        <dependency>
+            <groupId>eu.hansolo.mcp</groupId>
+            <artifactId>mcp-example</artifactId>
+            <version>${project.version}</version>
+            <type>war</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.platform</groupId>
+            <artifactId>jakarta.jakartaee-web-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.parsson</groupId>
+            <artifactId>parsson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+        </dependency>
+        <!-- Makes Testcontainers explain itself (which Docker sockets it tried and why each failed). The 1.7.x line matches the SLF4J 1.x API seen on the test classpath; drop this once logging works. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>1.7.36</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <mcp.war>${project.basedir}/../mcp-example/target/mcp-example.war</mcp.war>
+                        <mcp.server>${mcp.server}</mcp.server>
+                        <mcp.image>${mcp.image}</mcp.image>
+                        <mcp.realm>${project.basedir}/../keycloak/mcp-realm.json</mcp.realm>
+                        <keycloak.image>${keycloak.image}</keycloak.image>
+                        <payara.image>${payara.image}</payara.image>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
