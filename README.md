@@ -249,7 +249,7 @@ For maintainers. Uses the Central Portal; the namespace `eu.hansolo` must be ver
 
 1. A server `central` in `~/.m2/settings.xml` holding a portal user token, and a GPG key whose public half is on a keyserver.
 2. Set a release version (`mvn versions:set -DnewVersion=0.1.0`), commit, tag.
-3. `mvn -Prelease clean deploy` signs and uploads the parent POM and `mcp-jakarta` (jar, sources, Javadoc). The examples and `mcp-it` are skipped.
+3. `mvn -Prelease clean deploy -pl .,mcp-jakarta` signs and uploads the parent POM and `mcp-jakarta` (jar, sources, Javadoc). The `-pl` matters: the plugin bundles every module that is part of the build, so without it the example WARs and `mcp-it` would be uploaded too.
 4. The bundle is validated but not published: open the portal, check it and press Publish. Releases cannot be deleted afterwards. Set `autoPublish` to `true` in the root `pom.xml` to skip this step.
 5. Set the next `-SNAPSHOT` version.
 

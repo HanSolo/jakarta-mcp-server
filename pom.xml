@@ -157,10 +157,10 @@
     </build>
     <profiles>
         <!--
-          Publishing to Maven Central through the Central Portal:  mvn -Prelease clean deploy
+          Publishing to Maven Central through the Central Portal:  mvn -Prelease clean deploy -pl .,mcp-jakarta
           Needs a server "central" in ~/.m2/settings.xml (portal user token) and a GPG key. The upload is not published automatically:
           check the validated bundle in the portal and press Publish (set autoPublish to true to skip that). Only mcp-jakarta and this
-          parent POM are published; the example and test modules opt out in their own release profile. Never exercised by the author.
+          parent POM may be uploaded, hence -pl: the plugin bundles every module in the build, and the upload happens after the last one.
         -->
         <profile>
             <id>release</id>
