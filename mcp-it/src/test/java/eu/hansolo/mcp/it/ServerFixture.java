@@ -45,6 +45,11 @@ final class ServerFixture {
     }
 
 
+    /** The server under test: payara, wildfly or liberty. */
+    static String serverName() {
+        return SERVER.name().toLowerCase(java.util.Locale.ROOT);
+    }
+
     static int httpPort() {
         return SERVER.httpPort;
     }

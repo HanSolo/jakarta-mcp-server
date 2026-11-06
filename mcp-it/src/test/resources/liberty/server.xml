@@ -4,6 +4,8 @@
     <featureManager>
         <feature>jakartaee-11.0</feature>
     </featureManager>
+    <!-- the tests look for the INFO lines the example tools log; Liberty's console shows AUDIT and above by default -->
+    <logging consoleLogLevel="INFO"/>
     <httpEndpoint id="defaultHttpEndpoint" host="*" httpPort="9080" httpsPort="-1"/>
     <webApplication id="mcp-example" location="ROOT.war" contextRoot="/"/>
 </server>

@@ -39,6 +39,9 @@ class McpTicketsKeycloakIT {
     @BeforeAll
     static void start() throws Exception {
         Assumptions.assumeTrue(ServerFixture.dockerAvailable(), "Docker is not available: skipping integration tests");
+        // Liberty creates a container-managed EntityManagerFactory for @PersistenceUnit and, for that, wants a data source in server.xml
+        // (java:comp/DefaultDataSource); it ignores the jakarta.persistence.jdbc.* properties of the example's resource-local unit
+        Assumptions.assumeFalse(ServerFixture.serverName().equals("liberty"), "The tickets example needs a data source on Open Liberty (see README): skipping");
         keycloak = new KeycloakSupport();
         keycloak.start();
         server = ServerFixture.create(Path.of(System.getProperty("mcp.tickets.war", "../mcp-example-tickets/target/mcp-example-tickets.war")), keycloak.serverEnvironment("mcp:tools,tickets:read,tickets:write", "mcp:tools"), false);
