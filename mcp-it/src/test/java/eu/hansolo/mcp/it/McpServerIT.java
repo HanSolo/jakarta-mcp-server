@@ -58,7 +58,7 @@ class McpServerIT {
     void toolsListIsSortedAndCacheable() throws Exception {
         JsonObject result = client.toolsList(null).json().getJsonObject("result");
         List<String> names = result.getJsonArray("tools").stream().map(t -> t.asJsonObject().getString("name")).toList();
-        assertEquals(List.of("add", "echo", "greet", "repeat"), names);
+        assertEquals(List.of("add", "countdown", "echo", "greet", "repeat"), names);
         assertTrue(result.getJsonNumber("ttlMs").longValue() > 0);
         assertEquals("public", result.getString("cacheScope"));
         assertEquals("complete", result.getString("resultType"));
@@ -333,5 +333,79 @@ class McpServerIT {
     private static String requestBody(String method, String version) {
         JsonObject meta = Json.createObjectBuilder().add("io.modelcontextprotocol/protocolVersion", version).add("io.modelcontextprotocol/clientCapabilities", Json.createObjectBuilder()).build();
         return Json.createObjectBuilder().add("jsonrpc", "2.0").add("id", 1).add("method", method).add("params", Json.createObjectBuilder().add("_meta", meta)).build().toString();
+    }
+
+    // ---- streamed responses ----------------------------------------------------------------------------------------
+
+    private static final String BOTH = "application/json, text/event-stream";
+
+    @Test
+    void progressIsStreamedWhileTheToolIsStillRunning() throws Exception {
+        JsonObject arguments = Json.createObjectBuilder().add("steps", 4).add("delayMs", 400).build();
+        try (McpClient.Events events = client.openToolCall("countdown", arguments, "tok", BOTH)) {
+            assertEquals(200, events.status());
+            assertTrue(events.contentType().startsWith("text/event-stream"), events.contentType());
+            List<McpClient.Event> all = events.all();
+            assertEquals(5, all.size());
+            for (int i = 0; i < 4; i++) {
+                JsonObject notification = all.get(i).json();
+                assertEquals("notifications/progress", notification.getString("method"));
+                assertEquals("tok", notification.getJsonObject("params").getString("progressToken"));
+                assertEquals(i + 1, notification.getJsonObject("params").getJsonNumber("progress").intValue());
+                assertEquals(4, notification.getJsonObject("params").getJsonNumber("total").intValue());
+            }
+            JsonObject last = all.get(4).json();
+            assertEquals(1, last.getInt("id"));
+            assertEquals("Counted down 4 steps", last.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+            // The first progress event must arrive long before the last one. If the container (or a filter) buffered the response,
+            // everything would arrive together at the end and this gap would be near zero.
+            long gap = all.get(4).arrivedMs() - all.get(0).arrivedMs();
+            assertTrue(gap >= 900, "events arrived together (gap " + gap + " ms): the response was buffered, not streamed");
+        }
+    }
+
+    @Test
+    void withoutAProgressTokenOrEventStreamTheReplyIsPlainJson() throws Exception {
+        JsonObject arguments = Json.createObjectBuilder().add("steps", 2).add("delayMs", 0).build();
+        try (McpClient.Events events = client.openToolCall("countdown", arguments, null, BOTH)) {
+            assertEquals(200, events.status());
+            assertTrue(events.contentType().startsWith("application/json"), events.contentType());
+        }
+        try (McpClient.Events events = client.openToolCall("countdown", arguments, "tok", "application/json")) {
+            assertEquals(200, events.status());
+            assertTrue(events.contentType().startsWith("application/json"), events.contentType());
+        }
+        JsonObject result = client.toolsCall("countdown", arguments, null).json().getJsonObject("result");
+        assertEquals("Counted down 2 steps", result.getJsonArray("content").getJsonObject(0).getString("text"));
+    }
+
+    @Test
+    void errorsBeforeTheToolRunsAreNotStreamed() throws Exception {
+        try (McpClient.Events events = client.openToolCall("nope", Json.createObjectBuilder().build(), "tok", BOTH)) {
+            assertEquals(200, events.status());
+            assertTrue(events.contentType().startsWith("application/json"), events.contentType());
+        }
+        JsonObject tooMany = Json.createObjectBuilder().add("steps", 99).build();
+        try (McpClient.Events events = client.openToolCall("countdown", tooMany, "tok", BOTH)) {
+            // the tool itself rejects 99 steps: that is a tool error result, delivered as the single and final event
+            assertTrue(events.contentType().startsWith("text/event-stream"), events.contentType());
+            List<McpClient.Event> all = events.all();
+            assertEquals(1, all.size());
+            assertTrue(all.get(0).json().getJsonObject("result").getBoolean("isError"));
+        }
+    }
+
+    @Test
+    void closingTheStreamCancelsTheRequest() throws Exception {
+        JsonObject arguments = Json.createObjectBuilder().add("steps", 10).add("delayMs", 300).build();
+        client.callAndDropAfterFirstEvent("countdown", arguments, "cancel-me");
+        // the server notices on its next write and logs it from inside the tool; the tool takes 3 s if nothing stops it
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (!container.getLogs().contains("countdown cancelled at step") && System.currentTimeMillis() < deadline) {
+            Thread.sleep(250);
+        }
+        String logs = container.getLogs();
+        assertTrue(logs.contains("countdown cancelled at step"), "the tool was not told that the client had gone. Ran to the end: " + logs.contains("countdown finished") + "\n--- log tail ---\n" + logs.substring(Math.max(0, logs.length() - 3000)));
+        assertEquals(200, client.discover(null).status(), "the server must stay healthy after a cancelled stream");
     }
 }

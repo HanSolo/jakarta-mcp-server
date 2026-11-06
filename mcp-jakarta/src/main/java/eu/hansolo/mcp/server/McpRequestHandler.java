@@ -23,9 +23,11 @@ import eu.hansolo.mcp.api.McpToolHandler;
 import eu.hansolo.mcp.api.PromptArgument;
 import eu.hansolo.mcp.api.PromptCall;
 import eu.hansolo.mcp.api.PromptMessage;
+import eu.hansolo.mcp.api.ProgressReporter;
 import eu.hansolo.mcp.api.PromptResult;
 import eu.hansolo.mcp.api.ResourceCall;
 import eu.hansolo.mcp.api.ResourceContent;
+import eu.hansolo.mcp.api.RequestCancelledException;
 import eu.hansolo.mcp.api.ResourceResult;
 import eu.hansolo.mcp.api.Scopes;
 import eu.hansolo.mcp.auth.AuthConfig;
@@ -96,6 +98,10 @@ public class McpRequestHandler {
      *
      * @param headers case-insensitive request header lookup, returning null for absent headers
      * @param body    the request body; it is read at most {@code mcp.max-body-bytes + 1} bytes
+     * @return usually a JSON body. A {@code tools/call} that carries a {@code progressToken} from a client that lists
+     *         {@code text/event-stream} in {@code Accept} gets a streamed (Server-Sent Events) response instead. Everything that can
+     *         fail before the tool runs (origin, authentication, headers, scopes, arguments) is still answered as an ordinary JSON
+     *         error with its own HTTP status, because the status cannot change once streaming has begun.
      */
     public McpHttpResponse handle(Function<String, String> headers, InputStream body) {
         JsonValue id = null;
@@ -129,8 +135,16 @@ public class McpRequestHandler {
             }
             id = requestId(message.get("id"));
             String method = methodValue.getString();
-            JsonObject result = dispatch(method, message, headers, caller);
-            return new McpHttpResponse(200, JsonRpc.result(id, result).toString());
+            RequestContext context = prepare(method, message, headers, caller);
+            if (method.equals("tools/call") && HeaderValues.acceptsEventStream(headers.apply("Accept"))) {
+                JsonValue token = progressToken(context);
+                if (token != null) {
+                    PreparedTool prepared = prepareTool(context);
+                    JsonValue requestId = id;
+                    return McpHttpResponse.streaming(sink -> streamTool(requestId, prepared, token, sink));
+                }
+            }
+            return new McpHttpResponse(200, JsonRpc.result(id, execute(context)).toString());
         } catch (McpProtocolException e) {
             return new McpHttpResponse(e.httpStatus(), JsonRpc.error(id, e.code(), e.getMessage(), e.data()).toString());
         } catch (AuthChallengeException e) {
@@ -190,11 +204,16 @@ public class McpRequestHandler {
         throw McpProtocolException.invalidRequest("id must be a string or an integer");
     }
 
-    private JsonObject dispatch(String method, JsonObject message, Function<String, String> headers, Caller caller) {
+    /** Everything that can reject a request before any work is done: feature availability and the transport headers. */
+    private RequestContext prepare(String method, JsonObject message, Function<String, String> headers, Caller caller) {
         if (method.startsWith("prompts/") && registry.prompts().isEmpty() || method.startsWith("resources/") && !registry.hasResources() || method.equals("completion/complete") && !registry.hasCompletions()) {
             throw McpProtocolException.methodNotFound(method);
         }
-        RequestContext context = validate(method, message, headers, caller);
+        return validate(method, message, headers, caller);
+    }
+
+    private JsonObject execute(RequestContext context) {
+        String method = context.method();
         JsonObject result = switch (method) {
             case "server/discover" -> discover();
             case "tools/list" -> toolsList(context);
@@ -632,6 +651,11 @@ public class McpRequestHandler {
     }
 
     private JsonObject toolsCall(RequestContext context) {
+        return invokeTool(prepareTool(context), ProgressReporter.NONE);
+    }
+
+    /** Looks the tool up and checks scopes and arguments, so that these errors keep their HTTP status even when the call is streamed. */
+    private PreparedTool prepareTool(RequestContext context) {
         JsonObject params = context.params();
         String name = ((JsonString) params.get("name")).getString();
         McpToolHandler tool = registry.find(name).orElseThrow(() -> McpProtocolException.invalidArguments("Unknown tool: " + abbreviate(name)));
@@ -648,20 +672,60 @@ public class McpRequestHandler {
         }
         JsonObject inputResponses = optionalObject(params.get("inputResponses"), "params.inputResponses");
         String requestState = optionalString(params.get("requestState"), "params.requestState");
+        return new PreparedTool(name, tool, arguments, inputResponses, requestState, context);
+    }
+
+    private JsonObject invokeTool(PreparedTool prepared, ProgressReporter progress) {
+        RequestContext context = prepared.context();
         ToolResult outcome;
         try {
-            outcome = tool.call(new ToolCall(name, arguments, context.clientCapabilities(), context.clientInfo(), inputResponses, requestState, context.caller()));
-        } catch (McpProtocolException e) {
+            outcome = prepared.tool().call(new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress));
+        } catch (McpProtocolException | RequestCancelledException e) {
             throw e;
         } catch (Exception e) {
-            LOG.log(Level.WARNING, "Tool '" + name + "' failed", e);
+            LOG.log(Level.WARNING, "Tool '" + prepared.name() + "' failed", e);
             outcome = ToolResult.error("Tool execution failed");
         }
         if (outcome == null) {
-            LOG.warning("Tool '" + name + "' returned null");
+            LOG.warning("Tool '" + prepared.name() + "' returned null");
             outcome = ToolResult.error("Tool execution failed");
         }
         return toResult(outcome);
+    }
+
+    /** The {@code progressToken} of the request, or null if the client sent none. */
+    private static JsonValue progressToken(RequestContext context) {
+        JsonValue token = context.params().getJsonObject("_meta").get("progressToken");
+        if (token == null || token == JsonValue.NULL) {
+            return null;
+        }
+        if (token instanceof JsonString || (token instanceof JsonNumber number && number.isIntegral())) {
+            return token;
+        }
+        throw McpProtocolException.malformedParams("_meta.progressToken must be a string or an integer");
+    }
+
+    /**
+     * Runs the tool while the response is already streaming. The last event is the JSON-RPC response (a result, or an error that
+     * can no longer change the HTTP status). If the client has closed the stream the request is cancelled and nothing more is sent.
+     */
+    private void streamTool(JsonValue id, PreparedTool prepared, JsonValue token, McpHttpResponse.EventSink sink) throws IOException {
+        SseProgress progress = new SseProgress(sink, token);
+        String last;
+        try {
+            last = JsonRpc.result(id, withServerInfo(invokeTool(prepared, progress))).toString();
+        } catch (RequestCancelledException e) {
+            LOG.fine("Request cancelled: the client closed the stream");
+            return;
+        } catch (McpProtocolException e) {
+            last = JsonRpc.error(id, e.code(), e.getMessage(), e.data()).toString();
+        } catch (RuntimeException e) {
+            LOG.log(Level.SEVERE, "Unexpected failure while streaming an MCP response", e);
+            last = JsonRpc.error(id, ErrorCodes.INTERNAL_ERROR, "Internal error", null).toString();
+        }
+        if (!progress.isCancelled()) {
+            sink.send(last);
+        }
     }
 
     private static JsonObject toResult(ToolResult outcome) {
@@ -730,6 +794,9 @@ public class McpRequestHandler {
     /** Client-supplied text is echoed in error messages; cap it so a hostile client cannot make us reflect megabytes. */
     private static String abbreviate(String value) {
         return value.length() <= 100 ? value : value.substring(0, 100) + "...";
+    }
+
+    private record PreparedTool(String name, McpToolHandler tool, JsonObject arguments, JsonObject inputResponses, String requestState, RequestContext context) {
     }
 
     private record RequestContext(String method, JsonObject params, JsonObject clientCapabilities, JsonObject clientInfo, Caller caller) {

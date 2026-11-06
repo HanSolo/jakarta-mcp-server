@@ -26,4 +26,35 @@ final class HeaderValues {
         }
         return headerValue;
     }
+
+    /**
+     * True if an {@code Accept} header lists {@code text/event-stream} explicitly with a quality above zero. Wildcards do not
+     * count: a client that wants a stream says so, and a plain {@code *}{@code /*} must keep getting plain JSON.
+     */
+    static boolean acceptsEventStream(String accept) {
+        if (accept == null) {
+            return false;
+        }
+        for (String part : accept.split(",")) {
+            String[] fields = part.trim().split(";");
+            if (!fields[0].trim().equalsIgnoreCase("text/event-stream")) {
+                continue;
+            }
+            boolean refused = false;
+            for (int i = 1; i < fields.length; i++) {
+                String parameter = fields[i].trim().replace(" ", "");
+                if (parameter.regionMatches(true, 0, "q=", 0, 2)) {
+                    try {
+                        refused = Double.parseDouble(parameter.substring(2)) <= 0;
+                    } catch (NumberFormatException e) {
+                        refused = true;
+                    }
+                }
+            }
+            if (!refused) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

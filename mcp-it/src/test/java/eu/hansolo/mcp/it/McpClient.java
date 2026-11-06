@@ -4,13 +4,20 @@ import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.StringReader;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -110,5 +117,116 @@ final class McpClient {
     private Reply send(HttpRequest request) throws IOException, InterruptedException {
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
         return new Reply(response.statusCode(), response.body(), response.headers());
+    }
+
+    // ---- streamed responses ----------------------------------------------------------------------------------------
+
+    /** One Server-Sent Event: the JSON in its data lines and the time it arrived, in milliseconds after the request was sent. */
+    record Event(JsonObject json, long arrivedMs) {
+    }
+
+    /** An open response, read event by event, so a test sees when each event arrives instead of when the whole body is done. */
+    static final class Events implements AutoCloseable {
+
+        private final int            status;
+        private final String         contentType;
+        private final InputStream    stream;
+        private final BufferedReader reader;
+        private final long           startedNanos;
+
+
+        private Events(int status, String contentType, InputStream stream, long startedNanos) {
+            this.status       = status;
+            this.contentType  = contentType;
+            this.stream       = stream;
+            this.reader       = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+            this.startedNanos = startedNanos;
+        }
+
+
+        int status() {
+            return status;
+        }
+
+        String contentType() {
+            return contentType;
+        }
+
+        /** Blocks for the next event; null when the stream has ended. */
+        Event next() throws IOException {
+            StringBuilder data = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    if (data.length() > 0) {
+                        return new Event(Json.createReader(new StringReader(data.toString())).readObject(), (System.nanoTime() - startedNanos) / 1_000_000);
+                    }
+                } else if (line.startsWith("data:")) {
+                    data.append(line.substring(5).stripLeading());
+                }
+            }
+            return null;
+        }
+
+        List<Event> all() throws IOException {
+            List<Event> events = new ArrayList<>();
+            for (Event event = next(); event != null; event = next()) {
+                events.add(event);
+            }
+            return events;
+        }
+
+        /** Closing the connection is how a client cancels a streamed request. */
+        @Override
+        public void close() throws IOException {
+            stream.close();
+        }
+    }
+
+    /** Sends a tools/call with a progress token and the given Accept header, and returns as soon as the headers are in. */
+    Events openToolCall(String tool, JsonObject arguments, String progressToken, String accept) throws IOException, InterruptedException {
+        Map<String, String> headers = standardHeaders("tools/call", tool);
+        headers.put("Accept", accept);
+        JsonObjectBuilder meta = Json.createObjectBuilder().add("io.modelcontextprotocol/protocolVersion", VERSION).add("io.modelcontextprotocol/clientCapabilities", Json.createObjectBuilder());
+        if (progressToken != null) {
+            meta.add("progressToken", progressToken);
+        }
+        JsonObject params = Json.createObjectBuilder().add("name", tool).add("arguments", arguments).add("_meta", meta).build();
+        String body = Json.createObjectBuilder().add("jsonrpc", "2.0").add("id", 1).add("method", "tools/call").add("params", params).build().toString();
+        HttpRequest.Builder request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(60)).POST(HttpRequest.BodyPublishers.ofString(body));
+        headers.forEach(request::header);
+        long started = System.nanoTime();
+        HttpResponse<InputStream> response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+        return new Events(response.statusCode(), response.headers().firstValue("Content-Type").orElse(""), response.body(), started);
+    }
+
+    /**
+     * Sends a streamed tools/call over a raw socket, waits for the first progress event, then resets the connection (SO_LINGER 0
+     * makes close() send an RST, like a client that was killed). This is the disconnect a server has to detect; going through
+     * HttpClient would leave it to the JDK to decide when the connection really closes.
+     */
+    void callAndDropAfterFirstEvent(String tool, JsonObject arguments, String progressToken) throws IOException {
+        JsonObject meta = Json.createObjectBuilder().add("io.modelcontextprotocol/protocolVersion", VERSION).add("io.modelcontextprotocol/clientCapabilities", Json.createObjectBuilder()).add("progressToken", progressToken).build();
+        JsonObject params = Json.createObjectBuilder().add("name", tool).add("arguments", arguments).add("_meta", meta).build();
+        byte[] body = Json.createObjectBuilder().add("jsonrpc", "2.0").add("id", 1).add("method", "tools/call").add("params", params).build().toString().getBytes(StandardCharsets.UTF_8);
+        StringBuilder request = new StringBuilder("POST ").append(endpoint.getPath()).append(" HTTP/1.1\r\nHost: ").append(endpoint.getHost()).append(':').append(endpoint.getPort()).append("\r\n");
+        standardHeaders("tools/call", tool).forEach((name, value) -> request.append(name).append(": ").append(value).append("\r\n"));
+        request.append("Content-Length: ").append(body.length).append("\r\n\r\n");
+        try (Socket socket = new Socket(endpoint.getHost(), endpoint.getPort())) {
+            socket.setSoLinger(true, 0);
+            socket.setSoTimeout(20_000);
+            socket.getOutputStream().write(request.toString().getBytes(StandardCharsets.UTF_8));
+            socket.getOutputStream().write(body);
+            socket.getOutputStream().flush();
+            StringBuilder received = new StringBuilder();
+            byte[] buffer = new byte[1024];
+            while (!received.toString().contains("notifications/progress")) {
+                int read = socket.getInputStream().read(buffer);
+                if (read < 0) {
+                    throw new IOException("The server closed the connection before the first progress event: " + received);
+                }
+                received.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
+            }
+        }
     }
 }
