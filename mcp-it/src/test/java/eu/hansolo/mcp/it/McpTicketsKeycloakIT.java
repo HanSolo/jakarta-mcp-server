@@ -179,4 +179,35 @@ class McpTicketsKeycloakIT {
         List<String> values = completion.getJsonArray("values").getValuesAs(JsonString.class).stream().map(JsonString::getString).toList();
         assertTrue(values.contains("11") && values.contains("110"), values.toString());
     }
+
+    @Test
+    void ticketChangesAreDeliveredToSubscribersWhoMayReadThem() throws Exception {
+        JsonObject filter = Json.createObjectBuilder().add("resourceSubscriptions", Json.createArrayBuilder().add("ticket://stats")).build();
+        try (McpClient.Events events = client.openListen(5, filter, reader, "application/json, text/event-stream")) {
+            assertEquals(200, events.status());
+            JsonObject ack = events.nextWithin(java.time.Duration.ofSeconds(20)).json();
+            assertEquals("ticket://stats", ack.getJsonObject("params").getJsonObject("notifications").getJsonArray("resourceSubscriptions").getString(0));
+
+            structured(call("create_ticket", Json.createObjectBuilder().add("title", "Watched").add("description", "d").build(), writer, NONE));
+
+            JsonObject updated = events.nextWithin(java.time.Duration.ofSeconds(20)).json();
+            assertEquals("notifications/resources/updated", updated.getString("method"));
+            assertEquals("ticket://stats", updated.getJsonObject("params").getString("uri"));
+            assertEquals(5, updated.getJsonObject("params").getJsonObject("_meta").getInt("io.modelcontextprotocol/subscriptionId"));
+        }
+    }
+
+    @Test
+    void aTokenWithoutTicketScopesCannotWatchTickets() throws Exception {
+        String noTicketScope = keycloak.token("mcp-test", "mcp:tools");
+        JsonObject filter = Json.createObjectBuilder().add("resourceSubscriptions", Json.createArrayBuilder().add("ticket://stats").add("ticket://1")).build();
+        try (McpClient.Events events = client.openListen(6, filter, noTicketScope, "application/json, text/event-stream")) {
+            assertEquals(200, events.status());
+            JsonObject ack = events.nextWithin(java.time.Duration.ofSeconds(20)).json();
+            assertFalse(ack.getJsonObject("params").getJsonObject("notifications").containsKey("resourceSubscriptions"), "the server must not agree to watch what the caller may not read: " + ack);
+        }
+        try (McpClient.Events events = client.openListen(7, filter, null, "application/json, text/event-stream")) {
+            assertEquals(401, events.status());
+        }
+    }
 }

@@ -21,6 +21,9 @@ public class McpStartup {
             }
             LOG.warning("MCP authentication is DISABLED: anyone who can reach the endpoint can call every tool. Set mcp.auth.enabled=true for anything beyond local use.");
         }
+        if (config.listenAsync()) {
+            LOG.info("subscriptions/listen streams run on " + (config.listenExecutor() != null ? "the executor " + config.listenExecutor() + " (virtual threads if it cannot be found)" : "virtual threads") + ", up to " + config.maxListeners() + " at once");
+        }
         LOG.info("MCP server " + config.serverName() + " " + config.serverVersion() + " ready with " + registry.all().size() + " tool(s), " + registry.resources().size() + " resource(s), " + registry.templates().size() + " template(s), " + registry.prompts().size() + " prompt(s), authentication " + (auth.enabled() ? "enabled for " + auth.resource() : "disabled"));
     }
 }

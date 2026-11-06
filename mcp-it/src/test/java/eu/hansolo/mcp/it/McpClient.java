@@ -18,6 +18,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -168,6 +172,27 @@ final class McpClient {
             return null;
         }
 
+        /** Like {@link #next()}, but fails the test instead of hanging when nothing arrives (a listen stream has no end to wait for). */
+        Event nextWithin(Duration timeout) throws IOException {
+            CompletableFuture<Event> future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return next();
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+            try {
+                return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                throw new AssertionError("No event within " + timeout.toSeconds() + " s");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while waiting for an event");
+            } catch (ExecutionException e) {
+                throw new AssertionError("Reading the stream failed", e.getCause());
+            }
+        }
+
         List<Event> all() throws IOException {
             List<Event> events = new ArrayList<>();
             for (Event event = next(); event != null; event = next()) {
@@ -228,5 +253,22 @@ final class McpClient {
                 received.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
             }
         }
+    }
+
+    /** Opens a subscriptions/listen stream. The id of the request is the subscription id. */
+    Events openListen(int id, JsonObject notificationFilter, String bearer, String accept) throws IOException, InterruptedException {
+        Map<String, String> headers = standardHeaders("subscriptions/listen", null);
+        headers.put("Accept", accept);
+        if (bearer != null) {
+            headers.put("Authorization", "Bearer " + bearer);
+        }
+        JsonObject meta = Json.createObjectBuilder().add("io.modelcontextprotocol/protocolVersion", VERSION).add("io.modelcontextprotocol/clientCapabilities", Json.createObjectBuilder()).build();
+        JsonObject params = Json.createObjectBuilder().add("notifications", notificationFilter).add("_meta", meta).build();
+        String body = Json.createObjectBuilder().add("jsonrpc", "2.0").add("id", id).add("method", "subscriptions/listen").add("params", params).build().toString();
+        HttpRequest.Builder request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(30)).POST(HttpRequest.BodyPublishers.ofString(body));
+        headers.forEach(request::header);
+        long started = System.nanoTime();
+        HttpResponse<InputStream> response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+        return new Events(response.statusCode(), response.headers().firstValue("Content-Type").orElse(""), response.body(), started);
     }
 }

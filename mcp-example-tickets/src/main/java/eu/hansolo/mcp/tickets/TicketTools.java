@@ -12,6 +12,7 @@ import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolExecutionException;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.protocol.McpProtocolException;
+import eu.hansolo.mcp.server.McpNotifications;
 
 import java.util.Optional;
 
@@ -27,6 +28,7 @@ public class TicketTools {
     static final int MAX_LIMIT     = 50;
 
     private TicketStore store;
+    private McpNotifications notifications;
 
 
     /** For the CDI proxy. */
@@ -34,8 +36,9 @@ public class TicketTools {
     }
 
     @Inject
-    public TicketTools(TicketStore store) {
+    public TicketTools(TicketStore store, McpNotifications notifications) {
         this.store = store;
+        this.notifications = notifications;
     }
 
 
@@ -66,7 +69,9 @@ public class TicketTools {
         if (description.isBlank() || description.length() > 4000) {
             throw new ToolExecutionException("description must be 1 to 4000 characters");
         }
-        return store.create(cleanTitle, description.trim(), priority.orElse(Priority.MEDIUM), caller.subject());
+        TicketView created = store.create(cleanTitle, description.trim(), priority.orElse(Priority.MEDIUM), caller.subject());
+        notifications.resourceUpdated("ticket://stats");   // clients that watch the statistics read them again
+        return created;
     }
 
     /**
@@ -89,7 +94,11 @@ public class TicketTools {
         if (!(answer.get().get("action") instanceof JsonString action) || !action.getString().equals("accept")) {
             return ToolResult.error("Ticket " + id + " was not closed: the user declined.");
         }
-        return store.close(id, resolution.orElse(null)).map(closed -> ToolResult.text("Ticket " + closed.id() + " is now " + closed.status() + ".")).orElseGet(() -> ToolResult.error("There is no ticket " + id));
+        return store.close(id, resolution.orElse(null)).map(closed -> {
+            notifications.resourceUpdated("ticket://" + closed.id());
+            notifications.resourceUpdated("ticket://stats");
+            return ToolResult.text("Ticket " + closed.id() + " is now " + closed.status() + ".");
+        }).orElseGet(() -> ToolResult.error("There is no ticket " + id));
     }
 
     private static JsonObject confirmation(TicketView ticket) {

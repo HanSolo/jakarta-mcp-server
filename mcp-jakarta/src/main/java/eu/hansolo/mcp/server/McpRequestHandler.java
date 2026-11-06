@@ -45,6 +45,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -77,14 +78,21 @@ public class McpRequestHandler {
     private final McpConfig        config;
     private final AuthConfig       authConfig;
     private final McpAuthenticator authenticator;
+    private final McpNotifications notifications;
 
 
     @Inject
-    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator) {
+    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications) {
         this.registry      = registry;
         this.config        = config;
         this.authConfig    = authConfig;
         this.authenticator = authenticator;
+        this.notifications = notifications;
+    }
+
+    /** A handler with its own notification hub (nothing outside it can publish to the streams). */
+    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator) {
+        this(registry, config, authConfig, authenticator, new McpNotifications(config));
     }
 
     /** A handler with authentication switched off. */
@@ -136,6 +144,12 @@ public class McpRequestHandler {
             id = requestId(message.get("id"));
             String method = methodValue.getString();
             RequestContext context = prepare(method, message, headers, caller);
+            if (method.equals("subscriptions/listen")) {
+                if (!HeaderValues.acceptsEventStream(headers.apply("Accept"))) {
+                    throw new McpProtocolException(406, ErrorCodes.INVALID_REQUEST, "subscriptions/listen needs an Accept header that lists text/event-stream", null);
+                }
+                return listen(id, context);
+            }
             if (method.equals("tools/call") && HeaderValues.acceptsEventStream(headers.apply("Accept"))) {
                 JsonValue token = progressToken(context);
                 if (token != null) {
@@ -287,12 +301,12 @@ public class McpRequestHandler {
 
     private JsonObject discover() {
         JsonObjectBuilder result = Json.createObjectBuilder().add("resultType", "complete").add("supportedVersions", stringArray(McpVersions.SUPPORTED));
-        JsonObjectBuilder capabilities = Json.createObjectBuilder().add("tools", Json.createObjectBuilder());
+        JsonObjectBuilder capabilities = Json.createObjectBuilder().add("tools", Json.createObjectBuilder().add("listChanged", true));
         if (!registry.prompts().isEmpty()) {
-            capabilities.add("prompts", Json.createObjectBuilder());
+            capabilities.add("prompts", Json.createObjectBuilder().add("listChanged", true));
         }
         if (registry.hasResources()) {
-            capabilities.add("resources", Json.createObjectBuilder());
+            capabilities.add("resources", Json.createObjectBuilder().add("subscribe", true).add("listChanged", true));
         }
         if (registry.hasCompletions()) {
             capabilities.add("completions", Json.createObjectBuilder());
@@ -648,6 +662,100 @@ public class McpRequestHandler {
             result.add("nextCursor", nextCursor);
         }
         return result.add("ttlMs", config.cacheTtlMs()).add("cacheScope", perCaller ? "private" : "public").build();
+    }
+
+    private static final int MAX_RESOURCE_SUBSCRIPTIONS = 100;
+
+    /**
+     * Opens a {@code subscriptions/listen} stream. The filter is checked here, before streaming starts, so a bad request still gets
+     * a normal JSON error. The server answers only for what it can honor: list-changed for features it has, and resource URIs that
+     * exist and that this caller may read; everything else is left out of the acknowledgement, as the spec says.
+     */
+    private McpHttpResponse listen(JsonValue id, RequestContext context) {
+        if (!(context.params().get("notifications") instanceof JsonObject filter)) {
+            throw McpProtocolException.malformedParams("params.notifications must be an object");
+        }
+        boolean tools     = flag(filter, "toolsListChanged");
+        boolean prompts   = flag(filter, "promptsListChanged") && !registry.prompts().isEmpty();
+        boolean resources = flag(filter, "resourcesListChanged") && registry.hasResources();
+        Set<String> uris  = new java.util.LinkedHashSet<>();
+        JsonValue requested = filter.get("resourceSubscriptions");
+        if (requested != null && requested != JsonValue.NULL) {
+            if (!(requested instanceof JsonArray array)) {
+                throw McpProtocolException.malformedParams("resourceSubscriptions must be an array of strings");
+            }
+            if (array.size() > MAX_RESOURCE_SUBSCRIPTIONS) {
+                throw McpProtocolException.invalidArguments("At most " + MAX_RESOURCE_SUBSCRIPTIONS + " resource subscriptions per stream");
+            }
+            for (JsonValue entry : array) {
+                if (!(entry instanceof JsonString uri) || uri.getString().length() > MAX_URI) {
+                    throw McpProtocolException.malformedParams("resourceSubscriptions must be an array of strings of at most " + MAX_URI + " characters");
+                }
+                boolean readable = registry.resolve(uri.getString()).filter(r -> Scopes.satisfiesAll(context.caller().scopes(), r.requiredScopes())).isPresent();
+                if (readable) {
+                    uris.add(uri.getString());
+                }
+            }
+        }
+        Instant expiresAt = authConfig.enabled() ? McpNotifications.expiry(context.caller().claims().get("exp")) : null;
+        Subscription subscription = notifications.open(new Subscription(id, context.caller().subject(), expiresAt, tools, prompts, resources, uris));
+        McpHttpResponse.Streaming stream = sink -> runListen(subscription, sink);
+        return config.listenAsync() ? McpHttpResponse.detached(stream) : McpHttpResponse.streaming(stream);
+    }
+
+    private static boolean flag(JsonObject filter, String name) {
+        JsonValue value = filter.get(name);
+        if (value == null || value == JsonValue.NULL || value == JsonValue.FALSE) {
+            return false;
+        }
+        if (value == JsonValue.TRUE) {
+            return true;
+        }
+        throw McpProtocolException.malformedParams(name + " must be a boolean");
+    }
+
+    /**
+     * Holds the stream open: acknowledgement first, then notifications as they come, a comment line when idle (which is also how a
+     * vanished client is found: the write fails and the stream is released). Ends with a final response when the server closes it
+     * (token expired, application stopping, client too slow); a client that closes the stream ends it from its side.
+     */
+    private void runListen(Subscription subscription, McpHttpResponse.EventSink sink) throws IOException {
+        try {
+            sink.send(subscription.acknowledgement());
+            while (!subscription.isClosed()) {
+                long wait = config.keepAliveMs();
+                if (subscription.expiresAt() != null) {
+                    long untilExpiry = java.time.Duration.between(Instant.now(), subscription.expiresAt()).toMillis();
+                    if (untilExpiry <= 0) {
+                        break;
+                    }
+                    wait = Math.min(wait, untilExpiry);
+                }
+                List<String> due;
+                try {
+                    due = subscription.await(wait);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                for (String notification : due) {
+                    sink.send(notification);
+                }
+                if (due.isEmpty() && !subscription.isClosed()) {
+                    sink.comment("keep-alive");
+                }
+            }
+            try {
+                for (String notification : subscription.await(0)) {
+                    sink.send(notification);   // whatever was already pending when the stream ended
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            sink.send(subscription.finalResponse());
+        } finally {
+            notifications.remove(subscription);
+        }
     }
 
     private JsonObject toolsCall(RequestContext context) {

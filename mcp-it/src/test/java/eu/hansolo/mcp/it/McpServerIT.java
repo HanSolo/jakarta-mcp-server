@@ -58,7 +58,7 @@ class McpServerIT {
     void toolsListIsSortedAndCacheable() throws Exception {
         JsonObject result = client.toolsList(null).json().getJsonObject("result");
         List<String> names = result.getJsonArray("tools").stream().map(t -> t.asJsonObject().getString("name")).toList();
-        assertEquals(List.of("add", "countdown", "echo", "greet", "repeat"), names);
+        assertEquals(List.of("add", "countdown", "echo", "greet", "refresh_tools", "repeat"), names);
         assertTrue(result.getJsonNumber("ttlMs").longValue() > 0);
         assertEquals("public", result.getString("cacheScope"));
         assertEquals("complete", result.getString("resultType"));
@@ -407,5 +407,53 @@ class McpServerIT {
         String logs = container.getLogs();
         assertTrue(logs.contains("countdown cancelled at step"), "the tool was not told that the client had gone. Ran to the end: " + logs.contains("countdown finished") + "\n--- log tail ---\n" + logs.substring(Math.max(0, logs.length() - 3000)));
         assertEquals(200, client.discover(null).status(), "the server must stay healthy after a cancelled stream");
+    }
+
+    // ---- subscriptions/listen ------------------------------------------------------------------------------------
+
+    @Test
+    void aListenStreamReceivesTheListChangedNotificationAFirerTriggers() throws Exception {
+        JsonObject filter = Json.createObjectBuilder().add("toolsListChanged", true).add("promptsListChanged", true).add("resourcesListChanged", true).build();
+        try (McpClient.Events events = client.openListen(77, filter, null, BOTH)) {
+            assertEquals(200, events.status());
+            assertTrue(events.contentType().startsWith("text/event-stream"), events.contentType());
+            JsonObject ack = events.nextWithin(java.time.Duration.ofSeconds(20)).json();
+            assertEquals("notifications/subscriptions/acknowledged", ack.getString("method"));
+            assertEquals(77, ack.getJsonObject("params").getJsonObject("_meta").getInt("io.modelcontextprotocol/subscriptionId"));
+            assertTrue(ack.getJsonObject("params").getJsonObject("notifications").getBoolean("toolsListChanged"));
+
+            JsonObject refreshed = client.toolsCall("refresh_tools", Json.createObjectBuilder().build(), null).json().getJsonObject("result");
+            assertFalse(refreshed.getBoolean("isError"));
+
+            JsonObject changed = events.nextWithin(java.time.Duration.ofSeconds(20)).json();
+            assertEquals("notifications/tools/list_changed", changed.getString("method"));
+            assertEquals(77, changed.getJsonObject("params").getJsonObject("_meta").getInt("io.modelcontextprotocol/subscriptionId"));
+        }
+    }
+
+    @Test
+    void aListenStreamThatDidNotAskForToolChangesDoesNotGetThem() throws Exception {
+        try (McpClient.Events events = client.openListen(78, Json.createObjectBuilder().add("resourcesListChanged", true).build(), null, BOTH)) {
+            events.nextWithin(java.time.Duration.ofSeconds(20));   // acknowledgement
+            client.toolsCall("refresh_tools", Json.createObjectBuilder().build(), null);
+            // the next thing to arrive must not be the tools notification; the server only writes a comment (invisible) while idle
+            assertThrowsTimeout(events);
+        }
+    }
+
+    private static void assertThrowsTimeout(McpClient.Events events) throws Exception {
+        try {
+            McpClient.Event unexpected = events.nextWithin(java.time.Duration.ofSeconds(2));
+            throw new AssertionError("Unexpected event: " + unexpected.json());
+        } catch (AssertionError expected) {
+            assertTrue(expected.getMessage().startsWith("No event within"), expected.getMessage());
+        }
+    }
+
+    @Test
+    void listenWithoutEventStreamInAcceptIsRefused() throws Exception {
+        try (McpClient.Events events = client.openListen(79, Json.createObjectBuilder().add("toolsListChanged", true).build(), null, "application/json")) {
+            assertEquals(406, events.status());
+        }
     }
 }

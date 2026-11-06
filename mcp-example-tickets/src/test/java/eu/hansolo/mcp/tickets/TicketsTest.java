@@ -13,6 +13,8 @@ import eu.hansolo.mcp.api.ResourceResult;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.protocol.McpProtocolException;
+import eu.hansolo.mcp.server.McpConfig;
+import eu.hansolo.mcp.server.McpNotifications;
 import eu.hansolo.mcp.tools.AnnotatedCompletionHandler;
 import eu.hansolo.mcp.tools.BeanSource;
 import eu.hansolo.mcp.tools.CompletionScanner;
@@ -37,8 +39,9 @@ class TicketsTest {
     private static final JsonObject ELICIT = Json.createObjectBuilder().add("elicitation", Json.createObjectBuilder()).build();
     private static final Caller     ALICE = new Caller("alice", Set.of("tickets:read", "tickets:write"), NONE);
 
-    private final FakeTicketStore store = new FakeTicketStore();
-    private final Map<String, McpToolHandler> tools = ToolScanner.scan(TicketTools.class, BeanSource.of(new TicketTools(store))).stream().collect(Collectors.toMap(McpToolHandler::name, t -> t));
+    private final FakeTicketStore store         = new FakeTicketStore();
+    private final McpNotifications notifications = new McpNotifications(new McpConfig(null, 1024, 0L, "t", "1", null));
+    private final Map<String, McpToolHandler> tools = ToolScanner.scan(TicketTools.class, BeanSource.of(new TicketTools(store, notifications))).stream().collect(Collectors.toMap(McpToolHandler::name, t -> t));
 
 
     private TicketsTest seeded() {

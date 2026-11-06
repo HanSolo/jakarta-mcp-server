@@ -1,11 +1,13 @@
 package eu.hansolo.mcp.example;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import eu.hansolo.mcp.api.McpParam;
 import eu.hansolo.mcp.api.McpTool;
 import eu.hansolo.mcp.api.RequestCancelledException;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolExecutionException;
+import eu.hansolo.mcp.server.McpNotifications;
 
 import java.util.Collections;
 import java.util.Optional;
@@ -16,6 +18,9 @@ import java.util.logging.Logger;
 public class ExampleTools {
 
     private static final Logger LOG = Logger.getLogger(ExampleTools.class.getName());
+
+    @Inject
+    McpNotifications notifications;
 
     /** A record result becomes structuredContent and an outputSchema. */
     public record Sum(@McpParam(description = "a + b") double sum) {
@@ -68,5 +73,16 @@ public class ExampleTools {
         }
         LOG.info("countdown finished after " + steps + " steps");
         return "Counted down " + steps + " steps";
+    }
+
+    /**
+     * Shows list-changed notifications. A real server calls {@code notifications.toolsListChanged()} when the tools its clients can
+     * see really changed; this tool only fires the notification so the mechanism can be tried: open a
+     * {@code subscriptions/listen} stream with {@code toolsListChanged}, call this tool, and the stream receives the notification.
+     */
+    @McpTool(description = "Tells every client that listens for tool-list changes to read the list again (a demonstration of list-changed notifications).", readOnlyHint = McpTool.Hint.TRUE, idempotentHint = McpTool.Hint.TRUE)
+    public String refresh_tools() {
+        notifications.toolsListChanged();
+        return "Notified " + notifications.activeSubscriptions() + " open subscription(s) on this server instance";
     }
 }

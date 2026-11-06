@@ -24,6 +24,13 @@ public record McpHttpResponse(int status, String body, Map<String, String> heade
          * @throws IOException if the client is gone
          */
         void send(String json) throws IOException;
+
+        /**
+         * Sends an SSE comment line (invisible to clients) and flushes it. Used as a keep-alive on long-lived streams; a failed write
+         * reveals a client that has gone. The default does nothing, for sinks that do not support it.
+         */
+        default void comment(String text) throws IOException {
+        }
     }
 
     /** Produces the events of a streamed response. It runs after the response headers are sent, on the request thread. */
@@ -31,6 +38,20 @@ public record McpHttpResponse(int status, String body, Map<String, String> heade
     public interface Streaming {
 
         void writeTo(EventSink sink) throws IOException;
+    }
+
+
+    /**
+     * Marks a stream that stays open for a long time and does not need the request thread: the transport may run it on another
+     * thread (a virtual thread, say) and release the request thread. It must not use anything bound to the request, such as
+     * request-scoped beans; everything it needs has to be captured already.
+     */
+    public record Detached(Streaming delegate) implements Streaming {
+
+        @Override
+        public void writeTo(EventSink sink) throws IOException {
+            delegate.writeTo(sink);
+        }
     }
 
 
@@ -51,7 +72,17 @@ public record McpHttpResponse(int status, String body, Map<String, String> heade
         return new McpHttpResponse(200, null, Map.of(), stream);
     }
 
+    /** A 200 response that streams events for a long time and may be run off the request thread (see {@link Detached}). */
+    public static McpHttpResponse detached(Streaming stream) {
+        return new McpHttpResponse(200, null, Map.of(), new Detached(stream));
+    }
+
     public boolean isStreaming() {
         return stream != null;
+    }
+
+    /** True for a stream the transport may run on another thread. */
+    public boolean isDetached() {
+        return stream instanceof Detached;
     }
 }

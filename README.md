@@ -12,7 +12,9 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 - **Verified on the author's machine (macOS, Docker Desktop 29, Payara Micro 7.2026.10 Build 18 via `payara/micro:latest`, Keycloak 26.4):** `mvn clean verify` passed with 145 unit tests and 46 integration tests (30 in `McpServerIT` at the time, 34 now with the completion tests, 9 in `McpAuthServerIT` with a test issuer, 7 in `McpKeycloakIT` with a real Keycloak). That covers CDI scanning of `@McpTool` / `@McpResource` / `@McpPrompt` beans, the well-known metadata endpoint, 401/403 challenges, audience binding, MRTR and the `eu.hansolo.mcp` rename.
 - **Also passed on WildFly 42.0.0.Final and Open Liberty** (`-Dmcp.server=wildfly` / `liberty`; reported by the user, logs not shared with the author).
 - **Tickets example:** `mvn clean verify` passes on Payara with Keycloak (178 unit tests at that time, 8 tickets integration tests). Not yet run on WildFly or Open Liberty; WildFly ships its own H2 module, which may clash with the H2 driver bundled in the WAR.
-- **Streaming (progress notifications over SSE):** the first version used a JAX-RS `StreamingOutput`, and the integration tests on Payara showed that Jersey buffered it: all events arrived at the end. It now writes to the servlet response and flushes per event. That second version has not been run yet.
+- **Streaming (progress notifications over SSE):** passes on Payara (`mvn clean verify`, 4 streaming integration tests, including one that proves events arrive while the tool is still running and one that resets the connection and checks that the tool is told). The first version, a JAX-RS `StreamingOutput`, was buffered by Jersey; the servlet-based version fixed that. Not yet run on WildFly or Open Liberty.
+- **Notifications (`subscriptions/listen`, list-changed, resource updates):** passes on Payara (13 unit tests, 3 integration tests in `McpServerIT`, 2 in `McpTicketsKeycloakIT`). Not yet run on WildFly or Open Liberty.
+- **Async listen mode (`mcp.listen.async=true`, virtual threads):** passes on Payara (`mvn clean verify`: 196 library unit tests and 70 integration tests, including `McpAsyncListenIT`: the acknowledgement and notification, 60 open streams while ordinary requests are still answered, and a stream that lives past 40 seconds). Every request now goes through a suspended JAX-RS response, which the whole suite exercised. Not yet run on WildFly or Open Liberty.
 - **Not yet run:** the Docker Compose setup, the CI workflow and the `release` profile. After renaming packages or moving files, always build with `mvn clean verify`: stale classes in `target/` end up in the WAR and the deployment fails with a `ClassNotFoundException`.
 - **Unverified:** behaviour with a real identity provider (see the Keycloak item above; any other provider is untested). `latest` is a moving tag: pin the image with `-Dmcp.image=payara/micro:<tag>` once you have checked the tag name on Docker Hub.
 - **2026-07-28 clients only.** Clients that still require the `initialize` handshake (2025-11-25 and earlier) get HTTP 400 naming the supported version.
@@ -266,6 +268,11 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 | `mcp.max-body-bytes` | 1048576 | Request size limit (413 above it) |
 | `mcp.cache-ttl-ms` | 60000 | `ttlMs` hint on `server/discover` and the list methods |
 | `mcp.page-size` | 0 | Maximum items per page for `tools/list`, `resources/list`, `resources/templates/list` and `prompts/list`; 0 returns each list whole |
+| `mcp.listen.max` | 100 | Most `subscriptions/listen` streams open at once on this instance; each holds one thread (a container thread unless `mcp.listen.async` is on). 0 switches subscriptions off |
+| `mcp.listen.max-per-caller` | 10 | Most streams one caller (token subject) may hold open |
+| `mcp.listen.async` | false | Run `subscriptions/listen` streams on virtual threads, so they do not hold container request threads (see Notifications) |
+| `mcp.listen.executor` | none | JNDI name of a managed executor to run those streams on instead of JDK virtual threads |
+| `mcp.listen.keepalive-ms` | 15000 | How often an idle stream gets a comment line; this is also how a vanished client is noticed and its thread released |
 | `mcp.server.name`, `mcp.server.version` | from build | Identity returned in `_meta` and discovery |
 | `mcp.instructions` | none | Guidance for the model, returned by `server/discover` |
 | `mcp.auth.enabled` | false | Turn on bearer-token authentication |
@@ -326,7 +333,7 @@ What the client sees: zero or more `notifications/progress` events, then the JSO
 - **Errors before the tool runs keep their HTTP status.** Authentication, headers, unknown tool, missing scope and invalid arguments are checked first and answered as ordinary JSON (400, 401, 403, or 200 with a JSON-RPC error). Only after the tool has started is the status fixed at 200; a failure then arrives as the final event (an error result or a JSON-RPC error).
 - **Closing the connection cancels the request.** The server notices on its next write: `call.progress(...)` then throws `RequestCancelledException`, which a tool should let propagate. A tool that never reports progress cannot be cancelled this way, because nothing is written. The server sends nothing more for a cancelled request.
 - **Progress must increase** with every report of one call (the spec requires it); a repeated or smaller value throws `IllegalArgumentException`, which counts as a tool failure.
-- **Only `tools/call`.** Other methods are always plain JSON. There is no resumption (`Last-Event-ID` is ignored, as the spec says) and no `subscriptions/listen` yet.
+- **Only `tools/call`.** Other methods are always plain JSON. There is no resumption (`Last-Event-ID` is ignored, as the spec says). Long-lived notification streams are `subscriptions/listen` (see Notifications).
 - **The tool runs on the request thread** while the response is open, so a long call holds a container thread. Keep the call as short as the work allows; there is no keep-alive comment, so very long silences may be cut by proxies with idle timeouts.
 - **How it is written:** straight to the servlet response (needs the Servlet API, part of the Web Profile), not through JAX-RS, because Jersey ignores `flush()` on a `StreamingOutput` and delivers the whole entity at the end. The server flushes after every event and sends `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`. A reverse proxy in front may still buffer; turn that off for `/mcp`.
 
@@ -338,13 +345,66 @@ curl -N http://localhost:8080/mcp -H 'Content-Type: application/json' -H 'Accept
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"countdown","arguments":{"steps":3},"_meta":{"progressToken":"t1","io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
+## Notifications (`subscriptions/listen`)
+
+A client opens a long-lived stream with `subscriptions/listen` and says what it wants to hear about:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"notifications":{"toolsListChanged":true,"resourcesListChanged":true,"resourceSubscriptions":["ticket://stats"]},"_meta":{...}}}
+```
+
+The reply is an SSE stream (the request must list `text/event-stream` in `Accept`, otherwise 406). Its first event is `notifications/subscriptions/acknowledged`, which lists only what the server agreed to; after that come `notifications/tools/list_changed`, `prompts/list_changed`, `resources/list_changed` and `resources/updated` (with the `uri`) as they happen. Every notification carries `_meta["io.modelcontextprotocol/subscriptionId"]`, which is the `id` of the listen request. Closing the connection ends the subscription.
+
+**The application says when something changed.** The registry is built from CDI beans at startup, so the server cannot see changes by itself. Inject `McpNotifications` where the change happens:
+
+```java
+@Inject McpNotifications notifications;
+
+store.close(id);
+notifications.resourceUpdated("ticket://" + id);   // clients that subscribed to exactly this URI
+notifications.toolsListChanged();                  // call when the tools your clients can see really changed
+```
+
+The tickets example publishes `ticket://stats` (and `ticket://<id>`) when a ticket is created or closed; the `refresh_tools` tool in `mcp-example` only fires `toolsListChanged` so the mechanism can be tried.
+
+**What the server promises and checks**
+- It never sends a notification type the client did not ask for, and the acknowledgement lists only what it honors: list-changed for features it has, and resource URIs that exist **and** that the caller's scopes allow it to read. Anything else is silently left out.
+- Several changes before the stream gets to write are one notification (list-changed is idempotent; updated URIs are de-duplicated). A client that falls more than 1000 URIs behind is closed and should reconnect and reread.
+- The stream ends with a final `complete` response (and `_meta` subscription id) when the server closes it: the caller's token expires (the `exp` claim), the application stops, or the client fell behind. The client reconnects, with a fresh token if necessary.
+- Idle streams get an SSE comment line every `mcp.listen.keepalive-ms`. A failed write means the client is gone, and the stream and its thread are released within one interval.
+
+**Limits you must know about**
+- **One thread per open stream.** By default that is a container request thread. It is the simplest thing that works on every server, and it is the main cost of the feature. `mcp.listen.max` (100) and `mcp.listen.max-per-caller` (10) bound it, but a stream count near your HTTP thread pool size will starve normal requests: size the pool, lower the limit, or switch on the async mode below. Over a limit, the server answers 503.
+- **Per instance.** A stream lives on the instance that accepted it, so a change must be published on every instance (a message topic, database notifications, ...) and each instance calls `McpNotifications`. With a single instance there is nothing to do.
+- No resumption: events published while a client is disconnected are lost; the client rereads after reconnecting.
+- `server/discover` advertises `listChanged` (and `subscribe` for resources) in the capability objects. The revision's pages I could read do not define these fields, so they follow the earlier convention; clients that ignore them still work, because a listen request is answered either way.
+
+### Async mode: virtual threads
+
+With `mcp.listen.async=true` a listen stream no longer holds the container's request thread. The endpoint suspends the request (`@Suspended AsyncResponse`), commits the SSE response, and runs the wait loop on a JDK virtual thread; the request thread returns to the pool at once. An idle stream then costs a parked virtual thread, so `mcp.listen.max` can be raised well beyond the HTTP pool size.
+
+- **Only listen streams move.** A streamed `tools/call` still runs on the request thread, because tools may use request-scoped beans and the caller's security context.
+- **No container context on the stream thread.** The stream is already authenticated and only waits and writes, so unmanaged virtual threads are enough. To use an executor the container manages, define one in your application and name it (the `virtual` attribute needs Jakarta Concurrency 3.1, part of EE 11):
+
+  ```java
+  @ManagedExecutorDefinition(name = "java:app/concurrent/McpListen", virtual = true)
+  ```
+  ```
+  mcp.listen.async=true
+  mcp.listen.executor=java:app/concurrent/McpListen
+  ```
+  If the name cannot be looked up, the server logs a warning and uses plain virtual threads.
+- **JDK:** the library targets Java 21 and the waiting uses a lock and a condition, so it does not pin carrier threads on 21. On JDK 24 and later (including 25) even `synchronized` code no longer pins, which makes no difference here but helps tools you run yourself.
+- **Servlet async timeout:** the endpoint switches off the container's default async timeout (typically 30 seconds) for its suspended requests. If a proxy in front of the server cuts idle connections, keep `mcp.listen.keepalive-ms` below its idle timeout.
+- Off by default until it has been run on more than Payara. WildFly and Open Liberty are untested.
+
 ## Pagination
 
 Set `mcp.page-size` to split the four list methods into pages; the default (0) returns each list whole and rejects every cursor. Pages are in ascending order of tool/prompt name, resource URI or template, and each result carries `nextCursor` when more items follow. The cursor is keyset-based: it encodes the last key returned (`k1:<key>`, base64url) and the next page is everything after it. So no server state is needed, any instance can serve any page, and a cursor stays valid when items are added or removed. It is not signed: it contains nothing secret, and a forged cursor only picks a starting point in a list the caller may see anyway, because scope filtering is applied on every page. Cursors longer than 4096 characters, malformed ones and non-strings are -32602. `ttlMs` and `cacheScope` are identical on all pages, as the spec requires.
 
 ## Not implemented yet
 
-Resource subscriptions, `subscriptions/listen`, list-changed notifications, SSE for anything but `tools/call` progress (see Streaming); the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; opaque-token introspection; full JSON Schema 2020-12 validation of arguments (the handler checks `required`, top-level `type` and `additionalProperties: false`; `@McpTool` methods additionally get full type conversion); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); dynamic registration of tools at runtime; the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; opaque-token introspection; full JSON Schema 2020-12 validation of arguments (the handler checks `required`, top-level `type` and `additionalProperties: false`; `@McpTool` methods additionally get full type conversion); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
 
 ## Decisions worth a second look
 
