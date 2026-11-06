@@ -27,6 +27,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 | `mcp-jakarta` | Library JAR: tool, resource and prompt APIs (`@McpTool`, `@McpResource`, `@McpPrompt` and the matching handler interfaces), protocol handling (`McpRequestHandler`, container-independent), OAuth resource-server code (`auth`), JAX-RS resources, CDI wiring |
 | `mcp-example` | WAR deployed at the context root: annotated tools (`echo`, `add`, `repeat`), a handler-style tool (`greet`, multi round-trip), a resource (`config://server/info`), a template (`greeting://{name}`) and a prompt (`summarize`) |
 | `mcp-example-tickets` | A realistic example: a support-ticket service with a database, scopes and a confirmation step (see [The tickets example](#the-tickets-example)). Needs authentication |
+| `mcp-example-conformance` | A fixture WAR with the tools, prompts and resources the official conformance suite expects (see [Conformance suite](#conformance-suite)). A test aid, not an example to copy |
 | `mcp-it` | Integration tests: starts the example WAR in a Payara Micro, WildFly or Open Liberty container with Testcontainers |
 
 ## Supported servers
@@ -47,11 +48,11 @@ The code uses only Jakarta EE 11 Web Profile APIs and has now run on three serve
    <dependency>
        <groupId>eu.hansolo.mcp</groupId>
        <artifactId>mcp-jakarta</artifactId>
-       <version>0.1.0-SNAPSHOT</version>
+       <version>0.3.0</version>
    </dependency>
    ```
 
-   Not yet published to Maven Central: run `mvn install` in this project first. The `release` profile (see below) is prepared for publishing but has never been run.
+   `0.3.0` is on Maven Central. To use the current development state instead, run `mvn install` in this project and depend on `0.3.0-SNAPSHOT`. See [CHANGELOG.md](CHANGELOG.md) for what changed since 0.1.0.
 2. Register the endpoint classes in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication, `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. OAuth metadata discovery (RFC 9728) needs the application at the host root.
 3. Add `@McpTool`, `@McpResource` and `@McpPrompt` methods to your CDI beans (any bean-defining scope; with `bean-discovery-mode="annotated"` the class needs a scope annotation).
 4. Configure through system properties or environment variables (see the table below). Authentication is off by default.
@@ -201,6 +202,20 @@ For full control implement `McpToolHandler` in a CDI bean. `GreetTool` shows Mul
 
 Tools must not rely on state between calls. If a tool needs to continue across calls, return an explicit handle for the model to pass back.
 
+### Request state in multi round-trip tools
+
+`requestState` travels through the client, which can read, change and replay it, so a tool must not trust it as it arrives. Inject `McpRequestStates` and let it sign what you hand out:
+
+```java
+@Inject McpRequestStates states;
+...
+return ToolResult.inputRequired(request, states.sign("step=2;name=" + name, call.name() + "|" + call.caller().subject()));
+...
+String payload = states.require(call.requestState(), call.name() + "|" + call.caller().subject());  // -32602 if altered, expired or issued for someone else
+```
+
+The state is signed (HMAC-SHA256) and expires after `mcp.request-state.ttl-ms`; it is not encrypted, so keep secrets out of it. The optional context string binds a state to a tool and caller.
+
 ## Authentication
 
 The server can act as an OAuth 2.1 **resource server** as the MCP authorization spec describes: it validates bearer access tokens and tells clients where to get them. It is not an authorization server; you need one (Keycloak, Entra ID, Auth0, ...) that issues JWT access tokens and publishes a JWKS.
@@ -251,12 +266,12 @@ Not covered: the browser-based authorization-code flow and dynamic client regist
 For maintainers. Uses the Central Portal; the namespace `eu.hansolo` must be verified for your account.
 
 1. A server `central` in `~/.m2/settings.xml` holding a portal user token, and a GPG key whose public half is on a keyserver.
-2. Set a release version (`mvn versions:set -DnewVersion=0.1.0`), commit, tag.
+2. Set a release version (`mvn versions:set -DnewVersion=0.3.0 -DgenerateBackupPoms=false`), commit, tag.
 3. `mvn -Prelease clean deploy -pl .,mcp-jakarta` signs and uploads the parent POM and `mcp-jakarta` (jar, sources, Javadoc). The `-pl` matters: the plugin bundles every module that is part of the build, so without it the example WARs and `mcp-it` would be uploaded too.
 4. The bundle is validated but not published: open the portal, check it and press Publish. Releases cannot be deleted afterwards. Set `autoPublish` to `true` in the root `pom.xml` to skip this step.
 5. Set the next `-SNAPSHOT` version.
 
-The profile has never been run. Check the `central-publishing-maven-plugin` version in the root `pom.xml` against the current release first.
+The profile published 0.1.0. Check the `central-publishing-maven-plugin` version in the root `pom.xml` against the current release before each release.
 
 ## Configuration
 
@@ -264,7 +279,7 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `mcp.allowed-origins` | none | Comma-separated browser origins allowed to call the endpoint, or `*`. Requests without an `Origin` header (non-browser clients) always pass. |
+| `mcp.allowed-origins` | none | Comma-separated browser origins allowed to call the endpoint, or `*`. Requests without an `Origin` header (non-browser clients) always pass, and so do loopback origins (`http(s)://localhost`, `127.0.0.1` or `[::1]`, any port). |
 | `mcp.max-body-bytes` | 1048576 | Request size limit (413 above it) |
 | `mcp.cache-ttl-ms` | 60000 | `ttlMs` hint on `server/discover` and the list methods |
 | `mcp.page-size` | 0 | Maximum items per page for `tools/list`, `resources/list`, `resources/templates/list` and `prompts/list`; 0 returns each list whole |
@@ -272,6 +287,8 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 | `mcp.listen.max-per-caller` | 10 | Most streams one caller (token subject) may hold open |
 | `mcp.listen.async` | false | Run `subscriptions/listen` streams on virtual threads, so they do not hold container request threads (see Notifications) |
 | `mcp.listen.executor` | none | JNDI name of a managed executor to run those streams on instead of JDK virtual threads |
+| `mcp.request-state.secret` | random per instance | HMAC key for `McpRequestStates` (see Writing tools). Set the same value on every node of a cluster, or a state issued by one node is refused by another |
+| `mcp.request-state.ttl-ms` | 600000 | How long a signed request state stays valid |
 | `mcp.listen.keepalive-ms` | 15000 | How often an idle stream gets a comment line; this is also how a vanished client is noticed and its thread released |
 | `mcp.server.name`, `mcp.server.version` | from build | Identity returned in `_meta` and discovery |
 | `mcp.instructions` | none | Guidance for the model, returned by `server/discover` |
@@ -402,6 +419,19 @@ With `mcp.listen.async=true` a listen stream no longer holds the container's req
 
 Set `mcp.page-size` to split the four list methods into pages; the default (0) returns each list whole and rejects every cursor. Pages are in ascending order of tool/prompt name, resource URI or template, and each result carries `nextCursor` when more items follow. The cursor is keyset-based: it encodes the last key returned (`k1:<key>`, base64url) and the next page is everything after it. So no server state is needed, any instance can serve any page, and a cursor stays valid when items are added or removed. It is not signed: it contains nothing secret, and a forged cursor only picks a starting point in a list the caller may see anyway, because scope filtering is applied on every page. Cursors longer than 4096 characters, malformed ones and non-strings are -32602. `ttlMs` and `cacheScope` are identical on all pages, as the spec requires.
 
+## Conformance suite
+
+`mcp-example-conformance` builds `mcp-conformance.war`, which exposes the fixtures the official suite calls (`test_simple_text`, `test_input_required_result_*`, `test://static-text`, ...). Run it:
+
+```bash
+mvn -q -DskipTests package
+docker run --rm -p 8080:8080 -v "$PWD/mcp-example-conformance/target/mcp-conformance.war:/opt/payara/deployments/ROOT.war" payara/micro:latest
+# in another terminal
+npx --yes @modelcontextprotocol/conformance@alpha server --url http://localhost:8080/mcp --requirements 2026-07-28 -o results > all.txt 2>&1
+```
+
+Scenarios for features this server does not implement are expected to fail: the `tasks-*` scenarios (Tasks extension, not scored) and the pending `x-mcp-header` scenarios. The CI job `conformance` runs the suite and uploads the results; it does not block merges.
+
 ## Not implemented yet
 
 SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); dynamic registration of tools at runtime; the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; opaque-token introspection; full JSON Schema 2020-12 validation of arguments (the handler checks `required`, top-level `type` and `additionalProperties: false`; `@McpTool` methods additionally get full type conversion); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
@@ -409,7 +439,7 @@ SSE for anything but `tools/call` progress and `subscriptions/listen` (see Strea
 ## Decisions worth a second look
 
 - Errors about a well-formed request (unknown tool, bad arguments, bad cursor) go out as JSON-RPC errors on **HTTP 200**. Malformed metadata or headers use **400**, as the spec requires. The spec is silent on the first case, so this follows common SDK practice.
-- The `Origin` default is deny-when-present. A "same origin" default would defeat DNS-rebinding protection, because a rebound request carries a matching `Host`.
+- The `Origin` default is deny-when-present, except for loopback origins (`localhost`, `127.0.0.1`, `[::1]`, any port), which the conformance suite requires and which cannot be a DNS-rebinding attacker. A "same origin" default would defeat DNS-rebinding protection, because a rebound request carries a matching `Host`.
 - 401 and 403 bodies are JSON-RPC errors with the generic invalid-request code; the reserved -32020..-32099 range is only used where the spec defines a code.
 - `@McpTool`, `@McpResource` and `@McpPrompt` discovery scans the CDI bean manager at startup instead of using a portable extension. It sees every enabled bean, including ones in the application archive, with no `META-INF/services` registration. The cost is a one-time scan; a bean whose type set excludes its own class (`@Typed`) is not found.
 - The minimal `mcp-example` declares no scopes, because it must also start with authentication off (declared scopes fail the deployment by design). Scope enforcement per tool, resource, prompt and completion is covered by unit tests and, end to end, by `McpTicketsKeycloakIT` against the tickets example.

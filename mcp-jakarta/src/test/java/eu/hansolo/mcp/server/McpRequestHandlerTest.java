@@ -280,6 +280,20 @@ class McpRequestHandlerTest {
     }
 
     @Test
+    void loopbackOriginsAreAllowedByDefaultAndLookalikesAreNot() {
+        for (String origin : List.of("http://localhost:8080", "http://localhost", "https://localhost:3000", "http://127.0.0.1:6274", "http://[::1]:8080", "HTTP://LOCALHOST:8080/")) {
+            Map<String, String> headers = headers("server/discover", null);
+            headers.put("Origin", origin);
+            assertEquals(200, send(headers, body("server/discover", "1", null)).status(), origin);
+        }
+        for (String origin : List.of("http://localhost.evil.example", "http://evil.example", "http://127.0.0.1.evil.example", "http://localhost:80@evil.example", "http://evil.example/localhost", "http://localhost:99999x", "null", "ftp://localhost")) {
+            Map<String, String> headers = headers("server/discover", null);
+            headers.put("Origin", origin);
+            assertEquals(403, send(headers, body("server/discover", "1", null)).status(), origin);
+        }
+    }
+
+    @Test
     void sessionHeadersAreIgnoredAndNeverEchoed() {
         Map<String, String> headers = headers("server/discover", null);
         headers.put("Mcp-Session-Id", "abc");

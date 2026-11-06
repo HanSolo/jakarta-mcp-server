@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -24,6 +25,9 @@ import java.util.logging.Logger;
  *   <li>{@code mcp.listen.async}: run {@code subscriptions/listen} streams on virtual threads instead of holding a container request
  *       thread for each. Default false.</li>
  *   <li>{@code mcp.listen.executor}: JNDI name of a managed executor to run those streams on. Default: JDK virtual threads.</li>
+ *   <li>{@code mcp.request-state.secret}: HMAC key for {@link McpRequestStates}. Default: a random key per instance, so states do not
+ *       survive a restart and are not valid on other nodes; set it on every node of a cluster.</li>
+ *   <li>{@code mcp.request-state.ttl-ms}: how long a signed request state stays valid. Default 600000 (10 minutes).</li>
  *   <li>{@code mcp.server.name}, {@code mcp.server.version}, {@code mcp.instructions}: identity and model guidance.</li>
  * </ul>
  */
@@ -42,13 +46,15 @@ public class McpConfig {
     private final int         maxListenersPerCaller;
     private final boolean     listenAsync;
     private final String      listenExecutor;
+    private final String      requestStateSecret;
+    private final long        requestStateTtlMs;
     private final String      serverName;
     private final String      serverVersion;
     private final String      instructions;
 
 
     public McpConfig() {
-        this(Settings.get("mcp.allowed-origins"), Settings.getInt("mcp.max-body-bytes", 1024 * 1024), Settings.getLong("mcp.cache-ttl-ms", 60_000L), Settings.get("mcp.server.name"), Settings.get("mcp.server.version"), Settings.get("mcp.instructions"), Settings.getInt("mcp.page-size", 0), Settings.getLong("mcp.listen.keepalive-ms", 15_000L), Settings.getInt("mcp.listen.max", 100), Settings.getInt("mcp.listen.max-per-caller", 10), Settings.getBoolean("mcp.listen.async", false), Settings.get("mcp.listen.executor"));
+        this(Settings.get("mcp.allowed-origins"), Settings.getInt("mcp.max-body-bytes", 1024 * 1024), Settings.getLong("mcp.cache-ttl-ms", 60_000L), Settings.get("mcp.server.name"), Settings.get("mcp.server.version"), Settings.get("mcp.instructions"), Settings.getInt("mcp.page-size", 0), Settings.getLong("mcp.listen.keepalive-ms", 15_000L), Settings.getInt("mcp.listen.max", 100), Settings.getInt("mcp.listen.max-per-caller", 10), Settings.getBoolean("mcp.listen.async", false), Settings.get("mcp.listen.executor"), Settings.get("mcp.request-state.secret"), Settings.getLong("mcp.request-state.ttl-ms", 600_000L));
     }
 
     public McpConfig(String allowedOrigins, int maxBodyBytes, long cacheTtlMs, String serverName, String serverVersion, String instructions) {
@@ -64,6 +70,10 @@ public class McpConfig {
     }
 
     public McpConfig(String allowedOrigins, int maxBodyBytes, long cacheTtlMs, String serverName, String serverVersion, String instructions, int pageSize, long keepAliveMs, int maxListeners, int maxListenersPerCaller, boolean listenAsync, String listenExecutor) {
+        this(allowedOrigins, maxBodyBytes, cacheTtlMs, serverName, serverVersion, instructions, pageSize, keepAliveMs, maxListeners, maxListenersPerCaller, listenAsync, listenExecutor, null, 600_000L);
+    }
+
+    public McpConfig(String allowedOrigins, int maxBodyBytes, long cacheTtlMs, String serverName, String serverVersion, String instructions, int pageSize, long keepAliveMs, int maxListeners, int maxListenersPerCaller, boolean listenAsync, String listenExecutor, String requestStateSecret, long requestStateTtlMs) {
         Properties built = buildProperties();
         this.allowedOrigins = parseOrigins(allowedOrigins);
         this.allowAnyOrigin = this.allowedOrigins.contains("*");
@@ -75,6 +85,8 @@ public class McpConfig {
         this.maxListenersPerCaller = Math.max(1, maxListenersPerCaller);
         this.listenAsync    = listenAsync;
         this.listenExecutor = listenExecutor != null && !listenExecutor.isBlank() ? listenExecutor.trim() : null;
+        this.requestStateSecret = requestStateSecret != null && !requestStateSecret.isBlank() ? requestStateSecret : null;
+        this.requestStateTtlMs  = Math.max(1_000L, requestStateTtlMs);
         this.serverName     = serverName != null && !serverName.isBlank() ? serverName : built.getProperty("name", "jakarta-mcp-server");
         this.serverVersion  = serverVersion != null && !serverVersion.isBlank() ? serverVersion : built.getProperty("version", "unknown");
         this.instructions   = instructions != null && !instructions.isBlank() ? instructions : null;
@@ -119,6 +131,16 @@ public class McpConfig {
         return listenExecutor;
     }
 
+    /** The configured HMAC secret for request states, or null to use a random key per instance. */
+    public String requestStateSecret() {
+        return requestStateSecret;
+    }
+
+    /** How long a signed request state stays valid, in milliseconds. */
+    public long requestStateTtlMs() {
+        return requestStateTtlMs;
+    }
+
     public String serverName() {
         return serverName;
     }
@@ -132,12 +154,21 @@ public class McpConfig {
         return instructions;
     }
 
-    /** True if a request carrying this Origin header may proceed. Requests without an Origin header (non-browser clients) are always allowed. */
+    /** A page served from this machine: http or https, host localhost, 127.0.0.1 or [::1], any port. */
+    private static final Pattern LOOPBACK_ORIGIN = Pattern.compile("https?://(localhost|127\\.0\\.0\\.1|\\[::1])(:\\d{1,5})?");
+
+    /**
+     * True if a request carrying this Origin header may proceed. Requests without an Origin header (non-browser clients) are always
+     * allowed. An origin is allowed if it is listed in {@code mcp.allowed-origins} (or the list is {@code *}) or if it is a loopback
+     * origin: a page that runs on the same machine is no DNS-rebinding attacker, whose origin is always its own domain. Any other
+     * origin, including one that merely starts with {@code localhost} (such as {@code http://localhost.evil.example}), is refused.
+     */
     public boolean isOriginAllowed(String origin) {
         if (origin == null) {
             return true;
         }
-        return allowAnyOrigin || allowedOrigins.contains(normalize(origin));
+        String normalized = normalize(origin);
+        return allowAnyOrigin || allowedOrigins.contains(normalized) || LOOPBACK_ORIGIN.matcher(normalized).matches();
     }
 
     private static Set<String> parseOrigins(String value) {
