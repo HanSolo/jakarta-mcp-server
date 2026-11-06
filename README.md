@@ -48,11 +48,11 @@ The code uses only Jakarta EE 11 Web Profile APIs and has now run on three serve
    <dependency>
        <groupId>eu.hansolo.mcp</groupId>
        <artifactId>mcp-jakarta</artifactId>
-       <version>0.3.0</version>
+       <version>0.4.0</version>
    </dependency>
    ```
 
-   `0.3.0` is on Maven Central. To use the current development state instead, run `mvn install` in this project and depend on `0.3.0-SNAPSHOT`. See [CHANGELOG.md](CHANGELOG.md) for what changed since 0.1.0.
+   `0.4.0` is on Maven Central. To use the current development state instead, run `mvn install` in this project and depend on `0.4.0-SNAPSHOT`. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 2. Register the endpoint classes in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication, `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. OAuth metadata discovery (RFC 9728) needs the application at the host root.
 3. Add `@McpTool`, `@McpResource` and `@McpPrompt` methods to your CDI beans (any bean-defining scope; with `bean-discovery-mode="annotated"` the class needs a scope annotation).
 4. Configure through system properties or environment variables (see the table below). Authentication is off by default.
@@ -218,7 +218,7 @@ The state is signed (HMAC-SHA256) and expires after `mcp.request-state.ttl-ms`; 
 
 ## Authentication
 
-The server can act as an OAuth 2.1 **resource server** as the MCP authorization spec describes: it validates bearer access tokens and tells clients where to get them. It is not an authorization server; you need one (Keycloak, Entra ID, Auth0, ...) that issues JWT access tokens and publishes a JWKS.
+The server can act as an OAuth 2.1 **resource server** as the MCP authorization spec describes: it validates bearer access tokens and tells clients where to get them. It is not an authorization server; you need one (Keycloak, Entra ID, Auth0, ...) that issues access tokens: JWTs with a published JWKS, or opaque tokens that it can introspect (see below).
 
 Enable it with environment variables or system properties:
 
@@ -241,7 +241,27 @@ What it does:
 - Tools receive a `Caller` (subject, scopes, all claims) per call, never the raw token.
 - Misconfiguration fails the deployment: auth enabled with a missing issuer, resource or JWKS URI, a non-https JWKS URI (unless `mcp.auth.jwks-allow-http=true`, for local tests), or tools that declare scopes while auth is disabled.
 
-Notes: `tools/list`, `resources/list`, `resources/templates/list` and `prompts/list` show a caller only what their scopes allow. When any primitive declares scopes (and authentication is on), list results use `cacheScope` `private` so shared caches cannot hand one caller's list to another; otherwise `public`. Reading or getting something you lack the scope for is a 403 `insufficient_scope` challenge. Scopes on resources and prompts follow the same rule as for tools: declaring them with authentication off fails the deployment. Opaque tokens (introspection, RFC 7662) are not built in; provide your own `McpAuthenticator` bean (`@Alternative @Priority`). Dynamic client registration and the authorization-server side are out of scope. Tokens are not revocable between requests beyond their expiry, so keep access-token lifetimes short.
+Notes: `tools/list`, `resources/list`, `resources/templates/list` and `prompts/list` show a caller only what their scopes allow. When any primitive declares scopes (and authentication is on), list results use `cacheScope` `private` so shared caches cannot hand one caller's list to another; otherwise `public`. Reading or getting something you lack the scope for is a 403 `insufficient_scope` challenge. Scopes on resources and prompts follow the same rule as for tools: declaring them with authentication off fails the deployment. For opaque tokens see "Opaque tokens" below; for anything else, provide your own `McpAuthenticator` bean (`@Alternative @Priority`). Dynamic client registration and the authorization-server side are out of scope. Tokens are not revocable between requests beyond their expiry, so keep access-token lifetimes short.
+
+### Opaque tokens (introspection)
+
+If your authorization server issues opaque access tokens (random strings, no JWT), set the introspection endpoint instead of the JWKS URI (RFC 7662):
+
+```bash
+MCP_AUTH_ENABLED=true
+MCP_AUTH_RESOURCE=https://mcp.example.com/mcp
+MCP_AUTH_ISSUER=https://auth.example.com
+MCP_AUTH_INTROSPECTION_URI=https://auth.example.com/oauth2/introspect
+MCP_AUTH_INTROSPECTION_CLIENT_ID=mcp-server          # this server's own client at the endpoint
+MCP_AUTH_INTROSPECTION_CLIENT_SECRET=...
+```
+
+Set either `mcp.auth.jwks-uri` or `mcp.auth.introspection-uri`, not both; with introspection every token goes to the endpoint, JWT or not. The server posts `token=...` with HTTP Basic client credentials and trusts the answer only if it says `"active": true`; then it checks `iss` (if present), **`aud` equal to this resource** (a missing `aud` is refused unless `mcp.auth.introspection-require-audience=false`, a wrong one never is), `exp` and `nbf`. `sub`, `scope` and the other fields of the answer become the `Caller`.
+
+- **Caching:** answers are kept for `mcp.auth.introspection-cache-seconds` (default 30; 0 asks for every request), keyed by a hash of the token, and never past the token's own `exp`. That is also how long a revoked token can still work. A refusal is cached for at most 5 seconds.
+- **When the endpoint is down** (no connection, timeout, HTTP error, unusable answer) the request fails with **503**, not 401, so a client with a good token does not start a new login. Check the server log if the endpoint rejects this server's own credentials (it logs that, never the token).
+- **Load:** every new token costs one request to your authorization server, so a flood of garbage tokens reaches it. Put a rate limit in front of the MCP endpoint if it is exposed to the internet.
+- The endpoint must be https unless `mcp.auth.introspection-allow-http=true` (tests only). The URL comes from configuration only; redirects are not followed.
 
 ### Trying it with Keycloak
 
@@ -266,7 +286,7 @@ Not covered: the browser-based authorization-code flow and dynamic client regist
 For maintainers. Uses the Central Portal; the namespace `eu.hansolo` must be verified for your account.
 
 1. A server `central` in `~/.m2/settings.xml` holding a portal user token, and a GPG key whose public half is on a keyserver.
-2. Set a release version (`mvn versions:set -DnewVersion=0.3.0 -DgenerateBackupPoms=false`), commit, tag.
+2. Set a release version (`mvn versions:set -DnewVersion=0.4.0 -DgenerateBackupPoms=false`), commit, tag.
 3. `mvn -Prelease clean deploy -pl .,mcp-jakarta` signs and uploads the parent POM and `mcp-jakarta` (jar, sources, Javadoc). The `-pl` matters: the plugin bundles every module that is part of the build, so without it the example WARs and `mcp-it` would be uploaded too.
 4. The bundle is validated but not published: open the portal, check it and press Publish. Releases cannot be deleted afterwards. Set `autoPublish` to `true` in the root `pom.xml` to skip this step.
 5. Set the next `-SNAPSHOT` version.
@@ -295,7 +315,12 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 | `mcp.auth.enabled` | false | Turn on bearer-token authentication |
 | `mcp.auth.resource` | required if enabled | Canonical URL of the MCP endpoint; default audience; basis of the metadata URL |
 | `mcp.auth.issuer` | required if enabled | Expected `iss` |
-| `mcp.auth.jwks-uri` | required if enabled | Where signing keys are published (https) |
+| `mcp.auth.jwks-uri` | required if enabled, unless introspection is used | Where signing keys are published (https) |
+| `mcp.auth.introspection-uri` | none | RFC 7662 endpoint for opaque tokens; replaces `mcp.auth.jwks-uri` (https) |
+| `mcp.auth.introspection-client-id`, `mcp.auth.introspection-client-secret` | none | This server's credentials at the endpoint (HTTP Basic) |
+| `mcp.auth.introspection-cache-seconds` | 30 | How long an answer is reused; 0 = ask every time |
+| `mcp.auth.introspection-require-audience` | true | Refuse answers without `aud`; false accepts a missing `aud` (never a wrong one) |
+| `mcp.auth.introspection-allow-http` | false | Allow a plain-http endpoint (tests only) |
 | `mcp.auth.audience` | the resource | Expected `aud` |
 | `mcp.auth.authorization-servers` | the issuer | Advertised in the metadata document |
 | `mcp.auth.scopes-supported` | none | Advertised in the metadata document and in the 401 challenge |
@@ -415,6 +440,12 @@ With `mcp.listen.async=true` a listen stream no longer holds the container's req
 - **Servlet async timeout:** the endpoint switches off the container's default async timeout (typically 30 seconds) for its suspended requests. If a proxy in front of the server cuts idle connections, keep `mcp.listen.keepalive-ms` below its idle timeout.
 - Off by default. Verified on Payara and WildFly (reported by the user). On Open Liberty `McpAsyncListenIT` passed; the one failure there was a test that reads the container log, because Liberty's console hides INFO lines by default (the test `server.xml` now sets `consoleLogLevel="INFO"`).
 
+## Argument validation
+
+Before a tool runs, its arguments are checked against the tool's `inputSchema`; a violation is a -32602 error naming the first problem (`Property 'address.zip' must be of type integer`, `Missing required property 'name'`) and the tool is not called. This applies to hand-written `McpToolHandler` schemas as much as to generated ones, so a schema is now enforced, not just advertised.
+
+Checked: `type`, `enum`, `const`, `allOf`, `anyOf`, `oneOf`, `not`, `if`/`then`/`else`; `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`; `minLength`, `maxLength`, `pattern`; `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `contains`, `minContains`, `maxContains`; `properties`, `required`, `additionalProperties`, `patternProperties`, `propertyNames`, `minProperties`, `maxProperties`, `dependentRequired`; and `$ref` inside the schema (`#`, `#/$defs/name`, `$anchor`). Not checked: `format` (an annotation unless you ask otherwise), `unevaluatedProperties`, `unevaluatedItems`, other unknown keywords, and `$ref` to anything outside the schema (never fetched, so it is skipped). `pattern` uses `java.util.regex`, unanchored; a pattern that does not compile is skipped. Messages never repeat values the client sent. Check what a schema cannot express yourself.
+
 ## Dynamic registration
 
 Tools and prompts found at startup stay in the registry, but an application can also add, replace and remove them while it runs. Inject `McpRegistrations`:
@@ -438,7 +469,7 @@ Set `mcp.page-size` to split the four list methods into pages; the default (0) r
 
 ## Conformance suite
 
-`mcp-example-conformance` builds `mcp-conformance.war`, which exposes the fixtures the official suite calls (`test_simple_text`, `test_input_required_result_*`, `test://static-text`, ...). Run it:
+`mcp-example-conformance` builds `mcp-conformance.war`, which exposes the fixtures the official suite calls (`conformance_ping`, `test_simple_text`, `test_input_required_result_*`, `test://static-text`, ...). Run it:
 
 ```bash
 mvn -q -DskipTests package
@@ -451,7 +482,7 @@ Scenarios for features this server does not implement are expected to fail: the 
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; opaque-token introspection; full JSON Schema 2020-12 validation of arguments (the handler checks `required`, top-level `type` and `additionalProperties: false`; `@McpTool` methods additionally get full type conversion); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; `unevaluatedProperties`/`unevaluatedItems`, `format` assertions and remote `$ref` in argument validation (see Argument validation); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
 
 ## Decisions worth a second look
 

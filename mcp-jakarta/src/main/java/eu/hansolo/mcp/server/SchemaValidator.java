@@ -1,50 +1,375 @@
 package eu.hansolo.mcp.server;
 
+import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonNumber;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonString;
 import jakarta.json.JsonValue;
 
+import java.math.BigDecimal;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
- * A deliberately small check of tool arguments against the top level of the tool's inputSchema: {@code required},
- * {@code properties[*].type} and {@code additionalProperties: false}. It is NOT a JSON Schema 2020-12 validator, so tools
- * must still validate values (ranges, formats, nested objects) themselves.
+ * Checks tool arguments against the tool's {@code inputSchema}, with the assertion keywords of JSON Schema 2020-12 that tool
+ * schemas use in practice:
+ *
+ * <ul>
+ *   <li>any type: {@code type}, {@code enum}, {@code const}, {@code allOf}, {@code anyOf}, {@code oneOf}, {@code not}, {@code if}/{@code then}/{@code else}, {@code $ref}</li>
+ *   <li>numbers: {@code minimum}, {@code maximum}, {@code exclusiveMinimum}, {@code exclusiveMaximum}, {@code multipleOf}</li>
+ *   <li>strings: {@code minLength}, {@code maxLength}, {@code pattern}</li>
+ *   <li>arrays: {@code items}, {@code prefixItems}, {@code minItems}, {@code maxItems}, {@code uniqueItems}, {@code contains}, {@code minContains}, {@code maxContains}</li>
+ *   <li>objects: {@code properties}, {@code required}, {@code additionalProperties}, {@code patternProperties}, {@code propertyNames}, {@code minProperties}, {@code maxProperties}, {@code dependentRequired}</li>
+ * </ul>
+ *
+ * <p>Not asserted: {@code format} (an annotation by default), {@code unevaluatedProperties}, {@code unevaluatedItems}, and anything
+ * else unknown. {@code $ref} is resolved inside the schema only ({@code #}, JSON pointers such as {@code #/$defs/address} and
+ * {@code $anchor} names); a reference that cannot be resolved there, such as a URL, is ignored and never fetched. {@code pattern}
+ * uses {@code java.util.regex} and matches anywhere in the string, as JSON Schema does; one that does not compile is ignored. A tool
+ * must still check what a schema cannot say.
+ *
+ * <p>The first problem found is reported, without echoing any value the client sent (property names are shortened).
  */
 final class SchemaValidator {
 
-    private SchemaValidator() {
+    private static final int MAX_DEPTH = 100;
+    private static final int MAX_NAME  = 64;
+
+    private final JsonObject root;
+
+
+    private SchemaValidator(JsonObject root) {
+        this.root = root;
     }
 
 
-    /** Returns an error message, or empty if the arguments pass the checks above. */
+    /** Returns the first problem, or empty if the arguments satisfy the schema. */
     static Optional<String> validate(JsonObject schema, JsonObject arguments) {
-        if (schema.get("required") instanceof JsonArray required) {
-            for (JsonValue name : required) {
-                if (name instanceof JsonString s && !arguments.containsKey(s.getString())) {
-                    return Optional.of("Missing required property '" + s.getString() + "'");
-                }
-            }
-        }
-        JsonObject properties = schema.get("properties") instanceof JsonObject p ? p : JsonObject.EMPTY_JSON_OBJECT;
-        for (var entry : arguments.entrySet()) {
-            JsonValue propertySchema = properties.get(entry.getKey());
-            if (propertySchema == null) {
-                if (schema.get("additionalProperties") == JsonValue.FALSE) {
-                    return Optional.of("Unexpected property '" + entry.getKey() + "'");
-                }
-                continue;
-            }
-            if (propertySchema instanceof JsonObject ps && ps.containsKey("type") && !matchesType(ps.get("type"), entry.getValue())) {
-                return Optional.of("Property '" + entry.getKey() + "' must be of type " + ps.get("type"));
-            }
-        }
-        return Optional.empty();
+        return Optional.ofNullable(new SchemaValidator(schema).check(schema, arguments, "", 0));
     }
 
-    private static boolean matchesType(JsonValue type, JsonValue value) {
+    // ---- one schema against one instance ---------------------------------------------------------------------------
+
+    /** @return a description of the first problem, or null if the instance is valid */
+    private String check(JsonValue schema, JsonValue instance, String path, int depth) {
+        if (schema == JsonValue.TRUE) {
+            return null;
+        }
+        if (schema == JsonValue.FALSE) {
+            return where(path) + " is not allowed";
+        }
+        if (!(schema instanceof JsonObject s)) {
+            return null;
+        }
+        if (depth > MAX_DEPTH) {
+            return where(path) + " is nested too deeply to check";
+        }
+        String problem = reference(s, instance, path, depth);
+        if (problem == null) {
+            problem = generic(s, instance, path, depth);
+        }
+        if (problem == null) {
+            problem = switch (instance.getValueType()) {
+                case NUMBER -> number(s, (JsonNumber) instance, path);
+                case STRING -> string(s, (JsonString) instance, path);
+                case ARRAY  -> array(s, (JsonArray) instance, path, depth);
+                case OBJECT -> object(s, (JsonObject) instance, path, depth);
+                default     -> null;
+            };
+        }
+        return problem;
+    }
+
+    private String reference(JsonObject s, JsonValue instance, String path, int depth) {
+        if (s.get("$ref") instanceof JsonString ref) {
+            JsonValue target = resolve(ref.getString());
+            if (target != null) {
+                return check(target, instance, path, depth + 1);
+            }
+        }
+        return null;
+    }
+
+    private String generic(JsonObject s, JsonValue instance, String path, int depth) {
+        JsonValue type = s.get("type");
+        if (type != null && !typeMatches(type, instance)) {
+            return where(path) + " must be of type " + typeNames(type);
+        }
+        if (s.get("enum") instanceof JsonArray options && options.stream().noneMatch(o -> same(o, instance))) {
+            return where(path) + " must be one of " + options;
+        }
+        if (s.containsKey("const") && !same(s.get("const"), instance)) {
+            return where(path) + " must equal " + s.get("const");
+        }
+        if (s.get("allOf") instanceof JsonArray all) {
+            for (JsonValue sub : all) {
+                String problem = check(sub, instance, path, depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+        }
+        if (s.get("anyOf") instanceof JsonArray any && !any.isEmpty() && any.stream().noneMatch(sub -> check(sub, instance, path, depth + 1) == null)) {
+            return where(path) + " does not match any of the allowed shapes (anyOf)";
+        }
+        if (s.get("oneOf") instanceof JsonArray one) {
+            long matches = one.stream().filter(sub -> check(sub, instance, path, depth + 1) == null).count();
+            if (matches != 1) {
+                return where(path) + (matches == 0 ? " does not match any of the allowed shapes (oneOf)" : " matches more than one of the shapes of oneOf");
+            }
+        }
+        if (s.containsKey("not") && check(s.get("not"), instance, path, depth + 1) == null) {
+            return where(path) + " matches a shape that is not allowed";
+        }
+        if (s.containsKey("if")) {
+            boolean applies = check(s.get("if"), instance, path, depth + 1) == null;
+            if (applies && s.containsKey("then")) {
+                return check(s.get("then"), instance, path, depth + 1);
+            }
+            if (!applies && s.containsKey("else")) {
+                return check(s.get("else"), instance, path, depth + 1);
+            }
+        }
+        return null;
+    }
+
+    private String number(JsonObject s, JsonNumber value, String path) {
+        BigDecimal n = value.bigDecimalValue();
+        if (s.get("minimum") instanceof JsonNumber min && n.compareTo(min.bigDecimalValue()) < 0) {
+            return where(path) + " must be at least " + min.bigDecimalValue().toPlainString();
+        }
+        if (s.get("maximum") instanceof JsonNumber max && n.compareTo(max.bigDecimalValue()) > 0) {
+            return where(path) + " must be at most " + max.bigDecimalValue().toPlainString();
+        }
+        if (s.get("exclusiveMinimum") instanceof JsonNumber min && n.compareTo(min.bigDecimalValue()) <= 0) {
+            return where(path) + " must be greater than " + min.bigDecimalValue().toPlainString();
+        }
+        if (s.get("exclusiveMaximum") instanceof JsonNumber max && n.compareTo(max.bigDecimalValue()) >= 0) {
+            return where(path) + " must be less than " + max.bigDecimalValue().toPlainString();
+        }
+        if (s.get("multipleOf") instanceof JsonNumber step && step.bigDecimalValue().signum() > 0) {
+            try {
+                if (n.remainder(step.bigDecimalValue()).signum() != 0) {
+                    return where(path) + " must be a multiple of " + step.bigDecimalValue().toPlainString();
+                }
+            } catch (ArithmeticException e) {
+                return where(path) + " cannot be checked against multipleOf";
+            }
+        }
+        return null;
+    }
+
+    private String string(JsonObject s, JsonString value, String path) {
+        String text = value.getString();
+        int length = text.codePointCount(0, text.length());
+        if (s.get("minLength") instanceof JsonNumber min && length < min.intValue()) {
+            return where(path) + " must be at least " + min.intValue() + " characters long";
+        }
+        if (s.get("maxLength") instanceof JsonNumber max && length > max.intValue()) {
+            return where(path) + " must be at most " + max.intValue() + " characters long";
+        }
+        if (s.get("pattern") instanceof JsonString pattern) {
+            Pattern compiled = compile(pattern.getString());
+            if (compiled != null && !compiled.matcher(text).find()) {
+                return where(path) + " must match the pattern " + pattern.getString();
+            }
+        }
+        return null;
+    }
+
+    private String array(JsonObject s, JsonArray items, String path, int depth) {
+        if (s.get("minItems") instanceof JsonNumber min && items.size() < min.intValue()) {
+            return where(path) + " must have at least " + min.intValue() + " items";
+        }
+        if (s.get("maxItems") instanceof JsonNumber max && items.size() > max.intValue()) {
+            return where(path) + " must have at most " + max.intValue() + " items";
+        }
+        if (s.get("uniqueItems") == JsonValue.TRUE) {
+            for (int i = 0; i < items.size(); i++) {
+                for (int j = i + 1; j < items.size(); j++) {
+                    if (same(items.get(i), items.get(j))) {
+                        return where(path) + " must not contain the same item twice";
+                    }
+                }
+            }
+        }
+        int prefix = 0;
+        JsonValue itemSchema = s.get("items");
+        if (s.get("prefixItems") instanceof JsonArray positional) {
+            prefix = positional.size();
+        } else if (itemSchema instanceof JsonArray positional) {   // draft-07 tuple form
+            prefix = positional.size();
+            itemSchema = s.get("additionalItems");
+            for (int i = 0; i < Math.min(prefix, items.size()); i++) {
+                String problem = check(positional.get(i), items.get(i), index(path, i), depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+        }
+        if (s.get("prefixItems") instanceof JsonArray positional) {
+            for (int i = 0; i < Math.min(prefix, items.size()); i++) {
+                String problem = check(positional.get(i), items.get(i), index(path, i), depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+        }
+        if (itemSchema != null && !(itemSchema instanceof JsonArray)) {
+            for (int i = prefix; i < items.size(); i++) {
+                String problem = check(itemSchema, items.get(i), index(path, i), depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+        }
+        if (s.containsKey("contains")) {
+            long matching = 0;
+            for (int i = 0; i < items.size(); i++) {
+                if (check(s.get("contains"), items.get(i), index(path, i), depth + 1) == null) {
+                    matching++;
+                }
+            }
+            long min = s.get("minContains") instanceof JsonNumber m ? m.longValue() : 1;
+            if (matching < min) {
+                return where(path) + " must contain at least " + min + " matching " + (min == 1 ? "item" : "items");
+            }
+            if (s.get("maxContains") instanceof JsonNumber max && matching > max.longValue()) {
+                return where(path) + " must contain at most " + max.longValue() + " matching items";
+            }
+        }
+        return null;
+    }
+
+    private String object(JsonObject s, JsonObject value, String path, int depth) {
+        if (s.get("required") instanceof JsonArray required) {
+            for (JsonValue name : required) {
+                if (name instanceof JsonString key && !value.containsKey(key.getString())) {
+                    return "Missing required property '" + member(path, key.getString()) + "'";
+                }
+            }
+        }
+        if (s.get("minProperties") instanceof JsonNumber min && value.size() < min.intValue()) {
+            return where(path) + " must have at least " + min.intValue() + " properties";
+        }
+        if (s.get("maxProperties") instanceof JsonNumber max && value.size() > max.intValue()) {
+            return where(path) + " must have at most " + max.intValue() + " properties";
+        }
+        if (s.get("dependentRequired") instanceof JsonObject dependent) {
+            for (var entry : dependent.entrySet()) {
+                if (value.containsKey(entry.getKey()) && entry.getValue() instanceof JsonArray needed) {
+                    for (JsonValue name : needed) {
+                        if (name instanceof JsonString key && !value.containsKey(key.getString())) {
+                            return "Missing required property '" + member(path, key.getString()) + "' (needed when '" + member(path, entry.getKey()) + "' is present)";
+                        }
+                    }
+                }
+            }
+        }
+        JsonObject properties = s.get("properties") instanceof JsonObject p ? p : JsonObject.EMPTY_JSON_OBJECT;
+        JsonObject patterns   = s.get("patternProperties") instanceof JsonObject p ? p : JsonObject.EMPTY_JSON_OBJECT;
+        for (var entry : value.entrySet()) {
+            String key = entry.getKey();
+            String at  = member(path, key);
+            if (s.containsKey("propertyNames")) {
+                String problem = check(s.get("propertyNames"), Json.createValue(key), at, depth + 1);
+                if (problem != null) {
+                    return "Property name '" + shorten(at) + "' is not allowed";
+                }
+            }
+            boolean known = false;
+            if (properties.containsKey(key)) {
+                known = true;
+                String problem = check(properties.get(key), entry.getValue(), at, depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+            for (var pattern : patterns.entrySet()) {
+                Pattern compiled = compile(pattern.getKey());
+                if (compiled != null && compiled.matcher(key).find()) {
+                    known = true;
+                    String problem = check(pattern.getValue(), entry.getValue(), at, depth + 1);
+                    if (problem != null) {
+                        return problem;
+                    }
+                }
+            }
+            if (!known && s.containsKey("additionalProperties")) {
+                JsonValue additional = s.get("additionalProperties");
+                if (additional == JsonValue.FALSE) {
+                    return "Unexpected property '" + shorten(at) + "'";
+                }
+                String problem = check(additional, entry.getValue(), at, depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+        }
+        return null;
+    }
+
+    // ---- $ref ------------------------------------------------------------------------------------------------------
+
+    /** The schema a local reference points to, or null if it points anywhere else. */
+    private JsonValue resolve(String ref) {
+        if (ref.equals("#")) {
+            return root;
+        }
+        if (ref.startsWith("#/")) {
+            JsonValue current = root;
+            for (String token : ref.substring(2).split("/", -1)) {
+                String key = URLDecoder.decode(token.replace("+", "%2B"), StandardCharsets.UTF_8).replace("~1", "/").replace("~0", "~");
+                if (current instanceof JsonObject object && object.containsKey(key)) {
+                    current = object.get(key);
+                } else if (current instanceof JsonArray array && key.matches("\\d{1,9}") && Integer.parseInt(key) < array.size()) {
+                    current = array.get(Integer.parseInt(key));
+                } else {
+                    return null;
+                }
+            }
+            return current;
+        }
+        if (ref.startsWith("#") && ref.length() > 1) {
+            return findAnchor(root, ref.substring(1), 0);
+        }
+        return null;
+    }
+
+    private static JsonValue findAnchor(JsonValue node, String anchor, int depth) {
+        if (depth > MAX_DEPTH) {
+            return null;
+        }
+        if (node instanceof JsonObject object) {
+            if (object.get("$anchor") instanceof JsonString a && a.getString().equals(anchor)) {
+                return object;
+            }
+            for (JsonValue child : object.values()) {
+                JsonValue found = findAnchor(child, anchor, depth + 1);
+                if (found != null) {
+                    return found;
+                }
+            }
+        } else if (node instanceof JsonArray array) {
+            for (JsonValue child : array) {
+                JsonValue found = findAnchor(child, anchor, depth + 1);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    // ---- types and equality ----------------------------------------------------------------------------------------
+
+    private static boolean typeMatches(JsonValue type, JsonValue value) {
         if (type instanceof JsonString s) {
             return matches(s.getString(), value);
         }
@@ -54,16 +379,79 @@ final class SchemaValidator {
         return true;
     }
 
+    private static String typeNames(JsonValue type) {
+        if (type instanceof JsonString s) {
+            return s.getString();
+        }
+        List<String> names = new ArrayList<>();
+        if (type instanceof JsonArray types) {
+            types.forEach(t -> names.add(t instanceof JsonString s ? s.getString() : "?"));
+        }
+        return String.join(" or ", names);
+    }
+
     private static boolean matches(String type, JsonValue value) {
         return switch (type) {
-            case "string" -> value.getValueType() == JsonValue.ValueType.STRING;
-            case "number" -> value.getValueType() == JsonValue.ValueType.NUMBER;
+            case "string"  -> value.getValueType() == JsonValue.ValueType.STRING;
+            case "number"  -> value.getValueType() == JsonValue.ValueType.NUMBER;
             case "integer" -> value instanceof JsonNumber n && n.bigDecimalValue().stripTrailingZeros().scale() <= 0;
             case "boolean" -> value.getValueType() == JsonValue.ValueType.TRUE || value.getValueType() == JsonValue.ValueType.FALSE;
-            case "object" -> value.getValueType() == JsonValue.ValueType.OBJECT;
-            case "array" -> value.getValueType() == JsonValue.ValueType.ARRAY;
-            case "null" -> value.getValueType() == JsonValue.ValueType.NULL;
-            default -> true;
+            case "object"  -> value.getValueType() == JsonValue.ValueType.OBJECT;
+            case "array"   -> value.getValueType() == JsonValue.ValueType.ARRAY;
+            case "null"    -> value.getValueType() == JsonValue.ValueType.NULL;
+            default        -> true;
         };
+    }
+
+    /** JSON equality: numbers by value (1 equals 1.0), objects regardless of member order. */
+    static boolean same(JsonValue a, JsonValue b) {
+        if (a instanceof JsonNumber x && b instanceof JsonNumber y) {
+            return x.bigDecimalValue().compareTo(y.bigDecimalValue()) == 0;
+        }
+        if (a instanceof JsonObject x && b instanceof JsonObject y) {
+            if (!x.keySet().equals(y.keySet())) {
+                return false;
+            }
+            return x.entrySet().stream().allMatch(e -> same(e.getValue(), y.get(e.getKey())));
+        }
+        if (a instanceof JsonArray x && b instanceof JsonArray y) {
+            if (x.size() != y.size()) {
+                return false;
+            }
+            for (int i = 0; i < x.size(); i++) {
+                if (!same(x.get(i), y.get(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return a.equals(b);
+    }
+
+    private static Pattern compile(String regex) {
+        try {
+            return Pattern.compile(regex);
+        } catch (PatternSyntaxException e) {
+            return null;
+        }
+    }
+
+    // ---- messages --------------------------------------------------------------------------------------------------
+
+    private static String where(String path) {
+        return path.isEmpty() ? "Arguments" : "Property '" + shorten(path) + "'";
+    }
+
+    private static String member(String path, String key) {
+        return path.isEmpty() ? key : path + "." + key;
+    }
+
+    private static String index(String path, int i) {
+        return path + "[" + i + "]";
+    }
+
+    /** Names come from the client; keep the message short whatever it sent. */
+    private static String shorten(String text) {
+        return text.length() <= MAX_NAME ? text : text.substring(0, MAX_NAME) + "...";
     }
 }

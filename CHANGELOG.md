@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 ### Added
+- **Argument validation:** tool arguments are now checked against the whole `inputSchema` (nested objects, arrays, ranges, patterns, `enum`, `oneOf`, `if`/`then`/`else`, local `$ref`, ...), not only the top level. See "Argument validation" in the README.
+- **Opaque tokens:** `mcp.auth.introspection-uri` switches authentication from local JWT verification to RFC 7662 token introspection (`IntrospectionVerifier`), with client credentials, a short cache, audience binding and a 503 when the endpoint is unavailable. `mcp.auth.jwks-uri` is no longer required in that mode. See "Opaque tokens" in the README.
 - **Dynamic registration:** `McpRegistrations` adds, replaces and removes tools and prompts at runtime and sends `list_changed` to subscribed clients. See "Dynamic registration" in the README.
 
 ### Changed
+- **Behaviour change:** a hand-written tool schema that is stricter than the tool's code used to be advertised but not enforced; calls it forbids are now rejected with -32602 before the tool runs.
+- `AuthConfig` has six more constructor arguments (the old constructor still works); `JwtVerifier` implements the new `TokenVerifier` interface.
 - The registry's tool and prompt maps are concurrent. `McpRegistry.hasPrompts()` is new; the `prompts` capability stays on once a prompt was registered at runtime.
 
 ## 0.3.0

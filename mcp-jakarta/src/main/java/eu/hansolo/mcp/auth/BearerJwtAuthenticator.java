@@ -6,16 +6,20 @@ import eu.hansolo.mcp.api.Caller;
 
 import java.time.Clock;
 
-/** Default authenticator: {@code Authorization: Bearer <JWT>} verified locally by {@link JwtVerifier}. */
+/**
+ * Default authenticator: {@code Authorization: Bearer <token>}. A JWT is verified locally by {@link JwtVerifier}; if
+ * {@code mcp.auth.introspection-uri} is set, every token is instead sent to the authorization server's introspection endpoint
+ * (RFC 7662) by {@link IntrospectionVerifier}, which is what opaque access tokens need.
+ */
 @Singleton
 public class BearerJwtAuthenticator implements McpAuthenticator {
 
-    private final JwtVerifier verifier;
+    private final TokenVerifier verifier;
 
 
     @Inject
     public BearerJwtAuthenticator(AuthConfig config, KeyResolver keys) {
-        this.verifier = new JwtVerifier(config, keys, Clock.systemUTC());
+        this.verifier = config.introspectionUri() != null ? new IntrospectionVerifier(config, Clock.systemUTC()) : new JwtVerifier(config, keys, Clock.systemUTC());
     }
 
 

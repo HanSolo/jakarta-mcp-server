@@ -34,6 +34,9 @@ public final class ConformanceTools {
     /** All tools by name, in registration order. */
     public Map<String, McpToolHandler> all() {
         List<FixtureTool> tools = new ArrayList<>();
+        // Sorts before every other tool name. Some checks call the first listed tool with no arguments; json_schema_2020_12_tool would
+        // come first otherwise, and its schema (rightly) rejects an empty call now that arguments are validated against the schema.
+        tools.add(new FixtureTool("conformance_ping", "Takes no arguments.", c -> ToolResult.text("pong")));
         tools.add(new FixtureTool("test_simple_text", "Returns a simple text block.", c -> ToolResult.text("This is a simple text response for testing.")));
         tools.add(new FixtureTool("test_image_content", "Returns an image block.", c -> Content.blocks(Content.image())));
         tools.add(new FixtureTool("test_audio_content", "Returns an audio block.", c -> Content.blocks(Content.audio())));

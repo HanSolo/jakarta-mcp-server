@@ -26,7 +26,7 @@ import java.util.Set;
  * against keys from the configured issuer, then {@code iss}, {@code aud} (RFC 8707 resource binding), {@code exp} and {@code nbf}.
  * Header fields that name keys ({@code jku}, {@code jwk}, {@code x5u}) are ignored, so a token can never make the server fetch anything.
  */
-public final class JwtVerifier {
+public final class JwtVerifier implements TokenVerifier {
 
     private static final int MAX_TOKEN_CHARS = 8192;
 
@@ -42,6 +42,7 @@ public final class JwtVerifier {
     }
 
 
+    @Override
     public Caller verify(String token) throws TokenException {
         if (token.length() > MAX_TOKEN_CHARS) {
             throw new TokenException("Token too large");
@@ -117,7 +118,7 @@ public final class JwtVerifier {
     }
 
     /** Scopes from {@code scope} (space-separated string, RFC 9068) or {@code scp} (array or string, as some issuers emit). */
-    private static Set<String> scopesOf(JsonObject claims) {
+    static Set<String> scopesOf(JsonObject claims) {
         Set<String> scopes = new LinkedHashSet<>();
         for (String key : new String[] {"scope", "scp"}) {
             JsonValue value = claims.get(key);

@@ -39,6 +39,11 @@ public class ConformanceBeans {
     }
 
     @Produces
+    McpToolHandler conformancePingTool() {
+        return tools.get("conformance_ping");
+    }
+
+    @Produces
     McpToolHandler testSimpleTextTool() {
         return tools.get("test_simple_text");
     }
