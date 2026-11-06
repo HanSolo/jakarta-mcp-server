@@ -1,0 +1,37 @@
+[
+  {
+    "id": "resources-read-text",
+    "name": "ResourcesReadText",
+    "description": "Read text resource successfully",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.610Z",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Read",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#reading-resources"
+      }
+    ],
+    "details": {
+      "uri": "test://static-text",
+      "mimeType": "text/plain",
+      "hasText": true
+    }
+  },
+  {
+    "id": "wire-schema-valid",
+    "name": "WireSchemaValid",
+    "description": "Every JSON-RPC message the implementation sent is valid per the spec JSON schema for the negotiated spec version",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.610Z",
+    "specReferences": [
+      {
+        "id": "MCP-Schema",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/draft/schema.json"
+      }
+    ],
+    "details": {
+      "messagesValidated": 2,
+      "violations": []
+    }
+  }
+]

@@ -1,0 +1,71 @@
+[
+  {
+    "id": "sep-2164-no-empty-contents",
+    "name": "ResourcesNotFoundNoEmptyContents",
+    "description": "Server does not return an empty contents array for a non-existent resource",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.622Z",
+    "specReferences": [
+      {
+        "id": "SEP-2164",
+        "url": "https://modelcontextprotocol.io/specification/draft/server/resources#error-handling"
+      }
+    ],
+    "details": {
+      "requestedUri": "test://nonexistent-resource-for-conformance-testing",
+      "receivedResult": false
+    }
+  },
+  {
+    "id": "sep-2164-error-code",
+    "name": "ResourcesNotFoundErrorCode",
+    "description": "Server returns -32602 (Invalid Params) for non-existent resource (SHOULD)",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.622Z",
+    "specReferences": [
+      {
+        "id": "SEP-2164",
+        "url": "https://modelcontextprotocol.io/specification/draft/server/resources#error-handling"
+      }
+    ],
+    "details": {
+      "requestedUri": "test://nonexistent-resource-for-conformance-testing",
+      "receivedErrorCode": -32602,
+      "receivedResult": false
+    }
+  },
+  {
+    "id": "sep-2164-data-uri",
+    "name": "ResourcesNotFoundDataUri",
+    "description": "Server includes the requested URI in the error data field (SHOULD)",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.622Z",
+    "specReferences": [
+      {
+        "id": "SEP-2164",
+        "url": "https://modelcontextprotocol.io/specification/draft/server/resources#error-handling"
+      }
+    ],
+    "details": {
+      "requestedUri": "test://nonexistent-resource-for-conformance-testing",
+      "receivedDataUri": "test://nonexistent-resource-for-conformance-testing"
+    }
+  },
+  {
+    "id": "wire-schema-valid",
+    "name": "WireSchemaValid",
+    "description": "Every JSON-RPC message the implementation sent is valid per the spec JSON schema for the negotiated spec version",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.622Z",
+    "specReferences": [
+      {
+        "id": "MCP-Schema",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/draft/schema.json"
+      }
+    ],
+    "details": {
+      "messagesValidated": 2,
+      "violations": []
+    }
+  }
+]

@@ -1,0 +1,19 @@
+# Scenarios of the MCP conformance suite (2026-07-28) that this server is known to fail.
+# Used by the CI job and by: npx --yes @modelcontextprotocol/conformance@alpha server --url ... --requirements 2026-07-28 --expected-failures mcp-example-conformance/expected-failures.yml
+#
+# A scenario that fails and is listed here is fine. A scenario that fails and is NOT listed is a regression (exit 1).
+# A listed scenario that starts to pass makes the run fail too, so the entry gets removed.
+server:
+  # Tasks extension: not implemented (an extension, not scored for 2026-07-28).
+  # tasks-status-notifications is left out on purpose: it runs no checks and so "passes".
+  - tasks-lifecycle
+  - tasks-capability-negotiation
+  - tasks-wire-fields
+  - tasks-request-state-removal
+  - tasks-mrtr-input
+  - tasks-request-headers
+  - tasks-dispatch-and-envelope
+  - tasks-required-task-error
+  - tasks-mrtr-composition
+  # x-mcp-header / Mcp-Param-* headers: not implemented (pending in the suite).
+  - http-custom-header-server-validation

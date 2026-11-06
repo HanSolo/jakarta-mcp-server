@@ -1,0 +1,94 @@
+[
+  {
+    "id": "sep-2322-elicitation-incomplete",
+    "name": "InputRequiredResultElicitationIncomplete",
+    "description": "Server returns InputRequiredResult with elicitation inputRequest",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.691Z",
+    "specReferences": [
+      {
+        "id": "SEP-2322",
+        "url": "https://modelcontextprotocol.io/specification/draft/basic/utilities/mrtr"
+      }
+    ],
+    "details": {
+      "result": {
+        "resultType": "input_required",
+        "inputRequests": {
+          "user_name": {
+            "method": "elicitation/create",
+            "params": {
+              "mode": "form",
+              "message": "What is your name?",
+              "requestedSchema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "_meta": {
+          "io.modelcontextprotocol/serverInfo": {
+            "name": "jakarta-mcp-server",
+            "version": "0.3.0-SNAPSHOT"
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "sep-2322-elicitation-complete",
+    "name": "InputRequiredResultElicitationComplete",
+    "description": "Server returns complete result after retry with inputResponses",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.695Z",
+    "specReferences": [
+      {
+        "id": "SEP-2322",
+        "url": "https://modelcontextprotocol.io/specification/draft/basic/utilities/mrtr"
+      }
+    ],
+    "details": {
+      "result": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello, Alice!"
+          }
+        ],
+        "isError": false,
+        "_meta": {
+          "io.modelcontextprotocol/serverInfo": {
+            "name": "jakarta-mcp-server",
+            "version": "0.3.0-SNAPSHOT"
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "wire-schema-valid",
+    "name": "WireSchemaValid",
+    "description": "Every JSON-RPC message the implementation sent is valid per the spec JSON schema for the negotiated spec version",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.695Z",
+    "specReferences": [
+      {
+        "id": "MCP-Schema",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/draft/schema.json"
+      }
+    ],
+    "details": {
+      "messagesValidated": 4,
+      "violations": []
+    }
+  }
+]

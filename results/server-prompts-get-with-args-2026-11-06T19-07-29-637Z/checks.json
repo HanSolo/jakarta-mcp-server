@@ -1,0 +1,44 @@
+[
+  {
+    "id": "prompts-get-with-args",
+    "name": "PromptsGetWithArgs",
+    "description": "Get parameterized prompt with argument substitution",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.640Z",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-Get",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#getting-prompts"
+      }
+    ],
+    "details": {
+      "messageCount": 1,
+      "messages": [
+        {
+          "role": "user",
+          "content": {
+            "type": "text",
+            "text": "Prompt with arguments: arg1='testValue1', arg2='testValue2'"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "wire-schema-valid",
+    "name": "WireSchemaValid",
+    "description": "Every JSON-RPC message the implementation sent is valid per the spec JSON schema for the negotiated spec version",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.640Z",
+    "specReferences": [
+      {
+        "id": "MCP-Schema",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/draft/schema.json"
+      }
+    ],
+    "details": {
+      "messagesValidated": 2,
+      "violations": []
+    }
+  }
+]

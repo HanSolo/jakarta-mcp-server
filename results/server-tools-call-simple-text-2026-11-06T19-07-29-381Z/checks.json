@@ -1,0 +1,50 @@
+[
+  {
+    "id": "tools-call-simple-text",
+    "name": "ToolsCallSimpleText",
+    "description": "Tool returns simple text content",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.393Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-Call",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#calling-tools"
+      }
+    ],
+    "details": {
+      "result": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "This is a simple text response for testing."
+          }
+        ],
+        "isError": false,
+        "_meta": {
+          "io.modelcontextprotocol/serverInfo": {
+            "name": "jakarta-mcp-server",
+            "version": "0.3.0-SNAPSHOT"
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "wire-schema-valid",
+    "name": "WireSchemaValid",
+    "description": "Every JSON-RPC message the implementation sent is valid per the spec JSON schema for the negotiated spec version",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.393Z",
+    "specReferences": [
+      {
+        "id": "MCP-Schema",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/draft/schema.json"
+      }
+    ],
+    "details": {
+      "messagesValidated": 2,
+      "violations": []
+    }
+  }
+]

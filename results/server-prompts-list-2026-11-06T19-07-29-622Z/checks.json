@@ -1,0 +1,42 @@
+[
+  {
+    "id": "prompts-list",
+    "name": "PromptsList",
+    "description": "Server lists available prompts with valid structure",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.630Z",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-List",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#listing-prompts"
+      }
+    ],
+    "details": {
+      "promptCount": 5,
+      "prompts": [
+        "test_input_required_result_prompt",
+        "test_prompt_with_arguments",
+        "test_prompt_with_embedded_resource",
+        "test_prompt_with_image",
+        "test_simple_prompt"
+      ]
+    }
+  },
+  {
+    "id": "wire-schema-valid",
+    "name": "WireSchemaValid",
+    "description": "Every JSON-RPC message the implementation sent is valid per the spec JSON schema for the negotiated spec version",
+    "status": "SUCCESS",
+    "timestamp": "2026-11-06T19:07:29.630Z",
+    "specReferences": [
+      {
+        "id": "MCP-Schema",
+        "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/draft/schema.json"
+      }
+    ],
+    "details": {
+      "messagesValidated": 2,
+      "violations": []
+    }
+  }
+]

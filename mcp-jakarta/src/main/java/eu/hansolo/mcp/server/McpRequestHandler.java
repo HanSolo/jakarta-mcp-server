@@ -220,7 +220,7 @@ public class McpRequestHandler {
 
     /** Everything that can reject a request before any work is done: feature availability and the transport headers. */
     private RequestContext prepare(String method, JsonObject message, Function<String, String> headers, Caller caller) {
-        if (method.startsWith("prompts/") && registry.prompts().isEmpty() || method.startsWith("resources/") && !registry.hasResources() || method.equals("completion/complete") && !registry.hasCompletions()) {
+        if (method.startsWith("prompts/") && !registry.hasPrompts() || method.startsWith("resources/") && !registry.hasResources() || method.equals("completion/complete") && !registry.hasCompletions()) {
             throw McpProtocolException.methodNotFound(method);
         }
         return validate(method, message, headers, caller);
@@ -302,7 +302,7 @@ public class McpRequestHandler {
     private JsonObject discover() {
         JsonObjectBuilder result = Json.createObjectBuilder().add("resultType", "complete").add("supportedVersions", stringArray(McpVersions.SUPPORTED));
         JsonObjectBuilder capabilities = Json.createObjectBuilder().add("tools", Json.createObjectBuilder().add("listChanged", true));
-        if (!registry.prompts().isEmpty()) {
+        if (registry.hasPrompts()) {
             capabilities.add("prompts", Json.createObjectBuilder().add("listChanged", true));
         }
         if (registry.hasResources()) {
@@ -676,7 +676,7 @@ public class McpRequestHandler {
             throw McpProtocolException.malformedParams("params.notifications must be an object");
         }
         boolean tools     = flag(filter, "toolsListChanged");
-        boolean prompts   = flag(filter, "promptsListChanged") && !registry.prompts().isEmpty();
+        boolean prompts   = flag(filter, "promptsListChanged") && registry.hasPrompts();
         boolean resources = flag(filter, "resourcesListChanged") && registry.hasResources();
         Set<String> uris  = new java.util.LinkedHashSet<>();
         JsonValue requested = filter.get("resourceSubscriptions");

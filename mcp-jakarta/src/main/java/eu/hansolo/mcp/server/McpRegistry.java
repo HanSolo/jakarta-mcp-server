@@ -20,21 +20,25 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.regex.Pattern;
 
 /**
- * Every tool, resource, resource template and prompt of the deployment, validated once and listed in a deterministic order (by
- * name or URI) so clients can cache the lists.
+ * Every tool, resource, resource template and prompt of the deployment, validated and listed in a deterministic order (by
+ * name or URI) so clients can cache the lists. Everything found at startup is validated once; tools and prompts can also be added
+ * and removed while the server runs, through {@link McpRegistrations}, which also tells subscribed clients.
  */
 @Singleton
 public class McpRegistry {
 
     private static final Pattern VALID_NAME = Pattern.compile("[A-Za-z0-9_.-]{1,128}");
 
-    private final SortedMap<String, McpToolHandler>     tools;
+    private final ConcurrentNavigableMap<String, McpToolHandler> tools;
     private final SortedMap<String, McpResourceHandler> resources;
     private final SortedMap<String, TemplateEntry>      templates;
-    private final SortedMap<String, McpPromptHandler>   prompts;
+    private final ConcurrentNavigableMap<String, McpPromptHandler> prompts;
+    private volatile boolean                            promptsEnabled;
     private final Map<String, McpCompletionHandler>     completions;
 
 
@@ -119,6 +123,11 @@ public class McpRegistry {
         return List.copyOf(prompts.values());
     }
 
+    /** True if prompts are offered: some exist now, or the application has registered one at runtime (and may have removed it again). */
+    public boolean hasPrompts() {
+        return promptsEnabled || !prompts.isEmpty();
+    }
+
     public Optional<McpPromptHandler> findPrompt(String name) {
         return Optional.ofNullable(prompts.get(name));
     }
@@ -178,33 +187,69 @@ public class McpRegistry {
         return found;
     }
 
+    // ---- changes at runtime (used by McpRegistrations) -------------------------------------------------------------
+
+    void addTool(McpToolHandler tool, boolean replace) {
+        validateTool(tool);
+        if (replace) {
+            tools.put(tool.name(), tool);
+        } else if (tools.putIfAbsent(tool.name(), tool) != null) {
+            throw new IllegalStateException("Duplicate MCP tool name '" + tool.name() + "'");
+        }
+    }
+
+    boolean removeTool(String name) {
+        return name != null && tools.remove(name) != null;
+    }
+
+    void addPrompt(McpPromptHandler prompt, boolean replace) {
+        validatePrompt(prompt);
+        promptsEnabled = true;
+        if (replace) {
+            prompts.put(prompt.name(), prompt);
+        } else if (prompts.putIfAbsent(prompt.name(), prompt) != null) {
+            throw new IllegalStateException("Duplicate MCP prompt name '" + prompt.name() + "'");
+        }
+    }
+
+    boolean removePrompt(String name) {
+        return name != null && prompts.remove(name) != null;
+    }
+
     // ---- validation ------------------------------------------------------------------------------------------------
 
-    private static SortedMap<String, McpToolHandler> collectTools(Iterable<? extends McpToolHandler> source) {
-        SortedMap<String, McpToolHandler> result = new TreeMap<>();
+    private static ConcurrentNavigableMap<String, McpToolHandler> collectTools(Iterable<? extends McpToolHandler> source) {
+        ConcurrentNavigableMap<String, McpToolHandler> result = new ConcurrentSkipListMap<>();
         for (McpToolHandler tool : source) {
-            String name = tool.name();
-            checkName("tool", name, tool);
-            if (tool.inputSchema() == null) {
-                throw new IllegalStateException("MCP tool '" + name + "' has no inputSchema");
-            }
-            if (result.putIfAbsent(name, tool) != null) {
-                throw new IllegalStateException("Duplicate MCP tool name '" + name + "'");
+            validateTool(tool);
+            if (result.putIfAbsent(tool.name(), tool) != null) {
+                throw new IllegalStateException("Duplicate MCP tool name '" + tool.name() + "'");
             }
         }
         return result;
     }
 
-    private static SortedMap<String, McpPromptHandler> collectPrompts(Iterable<? extends McpPromptHandler> source) {
-        SortedMap<String, McpPromptHandler> result = new TreeMap<>();
+    private static void validateTool(McpToolHandler tool) {
+        String name = tool.name();
+        checkName("tool", name, tool);
+        if (tool.inputSchema() == null) {
+            throw new IllegalStateException("MCP tool '" + name + "' has no inputSchema");
+        }
+    }
+
+    private static ConcurrentNavigableMap<String, McpPromptHandler> collectPrompts(Iterable<? extends McpPromptHandler> source) {
+        ConcurrentNavigableMap<String, McpPromptHandler> result = new ConcurrentSkipListMap<>();
         for (McpPromptHandler prompt : source) {
-            String name = prompt.name();
-            checkName("prompt", name, prompt);
-            if (result.putIfAbsent(name, prompt) != null) {
-                throw new IllegalStateException("Duplicate MCP prompt name '" + name + "'");
+            validatePrompt(prompt);
+            if (result.putIfAbsent(prompt.name(), prompt) != null) {
+                throw new IllegalStateException("Duplicate MCP prompt name '" + prompt.name() + "'");
             }
         }
         return result;
+    }
+
+    private static void validatePrompt(McpPromptHandler prompt) {
+        checkName("prompt", prompt.name(), prompt);
     }
 
     private static SortedMap<String, McpResourceHandler> collectResources(Iterable<? extends McpResourceHandler> source) {

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Dynamic registration:** `McpRegistrations` adds, replaces and removes tools and prompts at runtime and sends `list_changed` to subscribed clients. See "Dynamic registration" in the README.
+
+### Changed
+- The registry's tool and prompt maps are concurrent. `McpRegistry.hasPrompts()` is new; the `prompts` capability stays on once a prompt was registered at runtime.
+
 ## 0.3.0
 
 Everything below is new since 0.1.0 (0.2.0 was never published).

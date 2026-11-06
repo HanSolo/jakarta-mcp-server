@@ -415,6 +415,23 @@ With `mcp.listen.async=true` a listen stream no longer holds the container's req
 - **Servlet async timeout:** the endpoint switches off the container's default async timeout (typically 30 seconds) for its suspended requests. If a proxy in front of the server cuts idle connections, keep `mcp.listen.keepalive-ms` below its idle timeout.
 - Off by default. Verified on Payara and WildFly (reported by the user). On Open Liberty `McpAsyncListenIT` passed; the one failure there was a test that reads the container log, because Liberty's console hides INFO lines by default (the test `server.xml` now sets `consoleLogLevel="INFO"`).
 
+## Dynamic registration
+
+Tools and prompts found at startup stay in the registry, but an application can also add, replace and remove them while it runs. Inject `McpRegistrations`:
+
+```java
+@Inject McpRegistrations registrations;
+
+registrations.addTool(new ReportTool(report));          // McpToolHandler; throws if the name is taken or invalid
+registrations.replaceTool(new ReportTool(report2));     // add, or replace the tool of the same name
+registrations.removeTool("report-" + report.id());      // false if there was no such tool
+registrations.addPrompt(...); registrations.replacePrompt(...); registrations.removePrompt(...);
+```
+
+Every real change sends `notifications/tools/list_changed` (or `prompts/...`) to all clients that hold a `subscriptions/listen` stream, so they list again; a removal of something that does not exist sends nothing. Handlers are checked as at startup, and one that declares required scopes is refused while `mcp.auth.enabled` is false. A call that is already running when its tool is removed finishes normally. Prompts: if the server started without any, the `prompts` capability is switched on by the first one you add and stays on afterwards.
+
+This is per instance, like `McpNotifications`: with several instances, make the same call on each. Clients that do not listen see a change when their cached list expires (`mcp.cache-ttl-ms`). Resources, resource templates and completions are fixed at startup.
+
 ## Pagination
 
 Set `mcp.page-size` to split the four list methods into pages; the default (0) returns each list whole and rejects every cursor. Pages are in ascending order of tool/prompt name, resource URI or template, and each result carries `nextCursor` when more items follow. The cursor is keyset-based: it encodes the last key returned (`k1:<key>`, base64url) and the next page is everything after it. So no server state is needed, any instance can serve any page, and a cursor stays valid when items are added or removed. It is not signed: it contains nothing secret, and a forged cursor only picks a starting point in a list the caller may see anyway, because scope filtering is applied on every page. Cursors longer than 4096 characters, malformed ones and non-strings are -32602. `ttlMs` and `cacheScope` are identical on all pages, as the spec requires.
@@ -430,11 +447,11 @@ docker run --rm -p 8080:8080 -v "$PWD/mcp-example-conformance/target/mcp-conform
 npx --yes @modelcontextprotocol/conformance@alpha server --url http://localhost:8080/mcp --requirements 2026-07-28 -o results > all.txt 2>&1
 ```
 
-Scenarios for features this server does not implement are expected to fail: the `tasks-*` scenarios (Tasks extension, not scored) and the pending `x-mcp-header` scenarios. The CI job `conformance` runs the suite and uploads the results; it does not block merges.
+Scenarios for features this server does not implement are expected to fail: the `tasks-*` scenarios (Tasks extension, not scored) and the pending `x-mcp-header` scenarios. They are listed in `mcp-example-conformance/expected-failures.yml`; pass that file with `--expected-failures` and the run exits 0 as long as nothing else fails. The CI job `conformance` does exactly that and fails on any other failure, and also when a listed scenario starts to pass (then delete its entry). It uploads the results as an artifact.
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); dynamic registration of tools at runtime; the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; opaque-token introspection; full JSON Schema 2020-12 validation of arguments (the handler checks `required`, top-level `type` and `additionalProperties: false`; `@McpTool` methods additionally get full type conversion); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; opaque-token introspection; full JSON Schema 2020-12 validation of arguments (the handler checks `required`, top-level `type` and `additionalProperties: false`; `@McpTool` methods additionally get full type conversion); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
 
 ## Decisions worth a second look
 
