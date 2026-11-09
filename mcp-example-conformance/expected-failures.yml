@@ -15,5 +15,5 @@ server:
   - tasks-dispatch-and-envelope
   - tasks-required-task-error
   - tasks-mrtr-composition
-  # x-mcp-header / Mcp-Param-* headers: not implemented (pending in the suite).
+  # x-mcp-header / Mcp-Param-* headers: implemented, but not yet confirmed against the suite. Delete this entry when the run says the scenario passes.
   - http-custom-header-server-validation

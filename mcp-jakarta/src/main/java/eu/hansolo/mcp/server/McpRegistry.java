@@ -3,11 +3,15 @@ package eu.hansolo.mcp.server;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import jakarta.json.JsonObject;
+import eu.hansolo.mcp.api.Apps;
+import eu.hansolo.mcp.api.Icon;
 import eu.hansolo.mcp.api.McpCompletionHandler;
 import eu.hansolo.mcp.api.McpPromptHandler;
 import eu.hansolo.mcp.api.McpResourceHandler;
 import eu.hansolo.mcp.api.McpResourceTemplateHandler;
 import eu.hansolo.mcp.api.McpToolHandler;
+import eu.hansolo.mcp.api.Meta;
 import eu.hansolo.mcp.api.ResourceCall;
 import eu.hansolo.mcp.api.ResourceResult;
 import eu.hansolo.mcp.tools.CdiAnnotationScanner;
@@ -53,6 +57,7 @@ public class McpRegistry {
         this.templates = collectTemplates(templates);
         this.prompts   = collectPrompts(prompts);
         this.completions = collectCompletions(completions);
+        this.tools.values().forEach(this::checkAppBinding);
     }
 
 
@@ -191,6 +196,7 @@ public class McpRegistry {
 
     void addTool(McpToolHandler tool, boolean replace) {
         validateTool(tool);
+        checkAppBinding(tool);
         if (replace) {
             tools.put(tool.name(), tool);
         } else if (tools.putIfAbsent(tool.name(), tool) != null) {
@@ -235,6 +241,12 @@ public class McpRegistry {
         if (tool.inputSchema() == null) {
             throw new IllegalStateException("MCP tool '" + name + "' has no inputSchema");
         }
+        checkDescriptors("tool '" + name + "'", tool.icons(), tool.meta());
+        try {
+            ParamHeaders.declared(tool.inputSchema());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("MCP tool '" + name + "': " + e.getMessage(), e);
+        }
     }
 
     private static ConcurrentNavigableMap<String, McpPromptHandler> collectPrompts(Iterable<? extends McpPromptHandler> source) {
@@ -250,6 +262,7 @@ public class McpRegistry {
 
     private static void validatePrompt(McpPromptHandler prompt) {
         checkName("prompt", prompt.name(), prompt);
+        checkDescriptors("prompt '" + prompt.name() + "'", prompt.icons(), prompt.meta());
     }
 
     private static SortedMap<String, McpResourceHandler> collectResources(Iterable<? extends McpResourceHandler> source) {
@@ -262,6 +275,7 @@ public class McpRegistry {
             if (resource.name() == null || resource.name().isBlank()) {
                 throw new IllegalStateException("MCP resource '" + uri + "' has no name");
             }
+            checkDescriptors("resource '" + uri + "'", resource.icons(), resource.meta());
             if (result.putIfAbsent(uri, resource) != null) {
                 throw new IllegalStateException("Duplicate MCP resource URI '" + uri + "'");
             }
@@ -282,11 +296,38 @@ public class McpRegistry {
             if (handler.name() == null || handler.name().isBlank()) {
                 throw new IllegalStateException("MCP resource template '" + text + "' has no name");
             }
+            checkDescriptors("resource template '" + text + "'", handler.icons(), handler.meta());
             if (result.putIfAbsent(text, new TemplateEntry(template, handler)) != null) {
                 throw new IllegalStateException("Duplicate MCP resource template '" + text + "'");
             }
         }
         return result;
+    }
+
+    /** A tool that names a ui:// page must have it: the Apps specification says the referenced resource must exist. */
+    private void checkAppBinding(McpToolHandler tool) {
+        try {
+            Apps.validateToolMeta(tool.meta(), "MCP tool '" + tool.name() + "'");
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(e.getMessage(), e);
+        }
+        Apps.boundResource(tool.meta()).ifPresent(uri -> {
+            if (resolve(uri).isEmpty()) {
+                throw new IllegalStateException("MCP tool '" + tool.name() + "' points at " + uri + " but this server has no such resource");
+            }
+        });
+    }
+
+    /** Icons and _meta are optional, but a handler that returns null for the list or a bad _meta key fails at startup, not on the first listing. */
+    private static void checkDescriptors(String what, List<Icon> icons, JsonObject meta) {
+        if (icons == null) {
+            throw new IllegalStateException("MCP " + what + ": icons() must return a list, not null (use List.of())");
+        }
+        try {
+            Meta.validate(meta, "MCP " + what);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(e.getMessage(), e);
+        }
     }
 
     private static void checkName(String kind, String name, Object owner) {

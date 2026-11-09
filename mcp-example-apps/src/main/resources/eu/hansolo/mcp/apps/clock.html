@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Server clock</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; padding: 1rem; font: 16px/1.4 system-ui, sans-serif; }
+    #time { font-size: 2.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+    #date, #iso, #status { opacity: .75; font-size: .9rem; }
+    #status { margin-top: .5rem; min-height: 1.4em; }
+    button { margin-top: .75rem; padding: .4rem .9rem; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="time">--:--:--</div>
+  <div id="date"></div>
+  <div id="iso"></div>
+  <button id="refresh" type="button" disabled>Refresh</button>
+  <div id="status">Connecting to the host...</div>
+  <script>
+    // An MCP Apps view: JSON-RPC 2.0 over postMessage with the host that embeds this page.
+    // It shows the structuredContent of the tool result the host passes in, and calls the app-only tool refresh_clock.
+    (function () {
+      var pending = new Map();
+      var nextId = 1;
+      var timeEl = document.getElementById('time');
+      var dateEl = document.getElementById('date');
+      var isoEl = document.getElementById('iso');
+      var statusEl = document.getElementById('status');
+      var button = document.getElementById('refresh');
+
+      function post(message) { window.parent.postMessage(message, '*'); }
+      function notify(method, params) { post({ jsonrpc: '2.0', method: method, params: params || {} }); }
+      function request(method, params) {
+        return new Promise(function (resolve, reject) {
+          var id = nextId++;
+          pending.set(id, { resolve: resolve, reject: reject });
+          post({ jsonrpc: '2.0', id: id, method: method, params: params });
+        });
+      }
+      function status(text) { statusEl.textContent = text; }
+
+      function showResult(result) {
+        var data = result && result.structuredContent;
+        if (data && typeof data.now === 'string' && !isNaN(Date.parse(data.now))) {
+          var when = new Date(data.now);
+          timeEl.textContent = when.toLocaleTimeString();
+          dateEl.textContent = when.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+          isoEl.textContent = 'Server time ' + data.now;
+          status('');
+          return;
+        }
+        var first = result && Array.isArray(result.content) && result.content[0];
+        timeEl.textContent = '--:--:--';
+        dateEl.textContent = '';
+        isoEl.textContent = first && typeof first.text === 'string' ? first.text : '';
+        status('The result carried no structured time.');
+      }
+
+      function applyContext(context) {
+        if (!context) { return; }
+        if (context.theme === 'light' || context.theme === 'dark') { document.documentElement.style.colorScheme = context.theme; }
+        var variables = context.styles && context.styles.variables;
+        if (variables && typeof variables === 'object') {
+          Object.keys(variables).forEach(function (name) {
+            if (name.indexOf('--') === 0 && typeof variables[name] === 'string') { document.documentElement.style.setProperty(name, variables[name]); }
+          });
+        }
+      }
+
+      window.addEventListener('message', function (event) {
+        if (event.source !== window.parent) { return; }
+        var message = event.data;
+        if (!message || message.jsonrpc !== '2.0') { return; }
+        if (typeof message.method === 'string') {
+          if (message.method === 'ui/notifications/tool-result') { showResult(message.params); }
+          else if (message.method === 'ui/notifications/tool-cancelled') { status('The tool call was cancelled.'); }
+          else if (message.method === 'ui/notifications/host-context-changed') { applyContext(message.params); }
+          else if (message.method === 'ui/resource-teardown' && message.id !== undefined) { post({ jsonrpc: '2.0', id: message.id, result: {} }); }
+          return;
+        }
+        var waiting = pending.get(message.id);
+        if (!waiting) { return; }
+        pending.delete(message.id);
+        if (message.error) { waiting.reject(new Error(message.error.message || 'request failed')); }
+        else { waiting.resolve(message.result); }
+      });
+
+      button.addEventListener('click', function () {
+        button.disabled = true;
+        status('Refreshing...');
+        request('tools/call', { name: 'refresh_clock', arguments: {} }).then(function (result) {
+          showResult(result);
+        }, function (error) {
+          status('Refresh failed: ' + error.message);
+        }).then(function () { button.disabled = false; });
+      });
+
+      if (typeof ResizeObserver === 'function') {
+        new ResizeObserver(function () {
+          notify('ui/notifications/size-changed', { width: Math.ceil(document.body.scrollWidth), height: Math.ceil(document.body.scrollHeight) });
+        }).observe(document.body);
+      }
+
+      if (window.parent === window) {
+        status('Open this page through a client that supports MCP Apps.');
+        return;
+      }
+      request('ui/initialize', { protocolVersion: '2026-01-26', clientInfo: { name: 'server-clock', version: '1.0.0' }, appCapabilities: {} }).then(function (result) {
+        applyContext(result && result.hostContext);
+        notify('ui/notifications/initialized');
+        button.disabled = false;
+        status('Waiting for the tool result...');
+      }, function (error) {
+        status('The host refused the connection: ' + error.message);
+      });
+    })();
+  </script>
+</body>
+</html>

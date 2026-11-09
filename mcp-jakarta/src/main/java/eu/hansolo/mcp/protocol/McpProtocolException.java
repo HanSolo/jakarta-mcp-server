@@ -79,6 +79,13 @@ public class McpProtocolException extends RuntimeException {
         return new McpProtocolException(400, ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY, "Server requires the " + capability + " capability for this request", data);
     }
 
+    /** The request needs an extension (for example {@code io.modelcontextprotocol/ui}) that the client did not declare. */
+    public static McpProtocolException missingClientExtension(String id) {
+        JsonObject required = Json.createObjectBuilder().add("extensions", Json.createObjectBuilder().add(id, Json.createObjectBuilder())).build();
+        JsonObject data = Json.createObjectBuilder().add("requiredCapabilities", required).build();
+        return new McpProtocolException(400, ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY, "Server requires the " + id + " extension for this request", data);
+    }
+
     public static McpProtocolException internal(String message) {
         return new McpProtocolException(500, ErrorCodes.INTERNAL_ERROR, message, null);
     }

@@ -1,6 +1,7 @@
 package eu.hansolo.mcp.tools;
 
 import jakarta.json.JsonObject;
+import eu.hansolo.mcp.api.Icon;
 import eu.hansolo.mcp.api.McpResource;
 import eu.hansolo.mcp.api.McpResourceHandler;
 import eu.hansolo.mcp.api.ResourceCall;
@@ -20,6 +21,8 @@ public final class AnnotatedResourceHandler implements McpResourceHandler {
     private final String         description;
     private final Set<String>    scopes;
     private final ResourceMethod target;
+    private final List<Icon>     icons;
+    private final JsonObject     meta;
 
 
     AnnotatedResourceHandler(Method method, BeanSource source) {
@@ -30,8 +33,21 @@ public final class AnnotatedResourceHandler implements McpResourceHandler {
         this.description = resource.description().isEmpty() ? null : resource.description();
         this.scopes      = Set.copyOf(new LinkedHashSet<>(List.of(resource.scopes())));
         this.target      = new ResourceMethod(method, source, resource.mimeType(), null);
+        String where     = method.getDeclaringClass().getName() + "." + method.getName();
+        this.icons       = Descriptors.icons(resource.icons(), where);
+        this.meta        = Descriptors.meta(resource.meta(), where);
     }
 
+
+    @Override
+    public List<Icon> icons() {
+        return icons;
+    }
+
+    @Override
+    public JsonObject meta() {
+        return meta;
+    }
 
     @Override
     public String uri() {

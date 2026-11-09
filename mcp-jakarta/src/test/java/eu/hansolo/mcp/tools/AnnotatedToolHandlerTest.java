@@ -30,6 +30,33 @@ class AnnotatedToolHandlerTest {
     }
 
 
+    public static class Decorated {
+
+        @McpTool(icons = {"https://example.com/a.png", "data:image/svg+xml;base64,AAAA"}, meta = "{\"com.example/team\":\"billing\"}")
+        public String shown() {
+            return "x";
+        }
+    }
+
+
+    public static class BadIcon {
+
+        @McpTool(icons = {"javascript:alert(1)"})
+        public String shown() {
+            return "x";
+        }
+    }
+
+
+    public static class BadMetaText {
+
+        @McpTool(meta = "[1]")
+        public String shown() {
+            return "x";
+        }
+    }
+
+
     public static class Sample {
 
         @McpTool(description = "Adds", readOnlyHint = McpTool.Hint.TRUE, idempotentHint = McpTool.Hint.TRUE, destructiveHint = McpTool.Hint.FALSE)
@@ -251,6 +278,23 @@ class AnnotatedToolHandlerTest {
         assertTrue(assertThrows(IllegalStateException.class, () -> ToolScanner.scan(Unsupported.class, BeanSource.of(new Unsupported()))).getMessage().contains("parameter 'thread'"));
         assertTrue(assertThrows(IllegalStateException.class, () -> ToolScanner.scan(Duplicate.class, BeanSource.of(new Duplicate()))).getMessage().contains("duplicate parameter name 'a'"));
         assertTrue(assertThrows(IllegalStateException.class, () -> ToolScanner.scan(PrimitiveOptional.class, BeanSource.of(new PrimitiveOptional()))).getMessage().contains("primitive"));
+    }
+
+    @Test
+    void iconsAndMetaComeFromTheAnnotation() {
+        McpToolHandler tool = ToolScanner.scan(Decorated.class, BeanSource.of(new Decorated())).get(0);
+        assertEquals(2, tool.icons().size());
+        assertEquals("https://example.com/a.png", tool.icons().get(0).src());
+        assertEquals("billing", tool.meta().getString("com.example/team"));
+        McpToolHandler plain = tools.get("nothing");
+        assertTrue(plain.icons().isEmpty());
+        assertNull(plain.meta());
+    }
+
+    @Test
+    void anUnsafeIconOrBrokenMetaFailsAtStartupWithTheMethodName() {
+        assertTrue(assertThrows(IllegalStateException.class, () -> ToolScanner.scan(BadIcon.class, BeanSource.of(new BadIcon()))).getMessage().contains("BadIcon.shown"));
+        assertTrue(assertThrows(IllegalStateException.class, () -> ToolScanner.scan(BadMetaText.class, BeanSource.of(new BadMetaText()))).getMessage().contains("meta must be a JSON object"));
     }
 
     @Test

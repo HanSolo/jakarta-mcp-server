@@ -1,5 +1,7 @@
 package eu.hansolo.mcp.tools;
 
+import jakarta.json.JsonObject;
+import eu.hansolo.mcp.api.Icon;
 import eu.hansolo.mcp.api.McpResource;
 import eu.hansolo.mcp.api.McpResourceTemplateHandler;
 import eu.hansolo.mcp.api.ResourceCall;
@@ -20,6 +22,8 @@ public final class AnnotatedTemplateHandler implements McpResourceTemplateHandle
     private final String         description;
     private final Set<String>    scopes;
     private final ResourceMethod target;
+    private final List<Icon>     icons;
+    private final JsonObject     meta;
 
 
     AnnotatedTemplateHandler(Method method, BeanSource source) {
@@ -29,6 +33,9 @@ public final class AnnotatedTemplateHandler implements McpResourceTemplateHandle
         this.title       = resource.title().isEmpty() ? null : resource.title();
         this.description = resource.description().isEmpty() ? null : resource.description();
         this.scopes      = Set.copyOf(new LinkedHashSet<>(List.of(resource.scopes())));
+        String where     = method.getDeclaringClass().getName() + "." + method.getName();
+        this.icons       = Descriptors.icons(resource.icons(), where);
+        this.meta        = Descriptors.meta(resource.meta(), where);
         try {
             this.target = new ResourceMethod(method, source, resource.mimeType(), UriTemplate.compile(uriTemplate));
         } catch (IllegalArgumentException e) {
@@ -36,6 +43,16 @@ public final class AnnotatedTemplateHandler implements McpResourceTemplateHandle
         }
     }
 
+
+    @Override
+    public List<Icon> icons() {
+        return icons;
+    }
+
+    @Override
+    public JsonObject meta() {
+        return meta;
+    }
 
     @Override
     public String uriTemplate() {

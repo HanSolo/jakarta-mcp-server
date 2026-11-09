@@ -1,6 +1,8 @@
 package eu.hansolo.mcp.tools;
 
+import jakarta.json.JsonObject;
 import eu.hansolo.mcp.api.Caller;
+import eu.hansolo.mcp.api.Icon;
 import eu.hansolo.mcp.api.McpParam;
 import eu.hansolo.mcp.api.McpPrompt;
 import eu.hansolo.mcp.api.McpPromptHandler;
@@ -31,6 +33,8 @@ public final class AnnotatedPromptHandler implements McpPromptHandler {
     private final List<Binding>         bindings;
     private final BeanSource            source;
     private final ReturnKind            returnKind;
+    private final List<Icon>            icons;
+    private final JsonObject            meta;
 
 
     AnnotatedPromptHandler(Method method, BeanSource source) {
@@ -45,9 +49,21 @@ public final class AnnotatedPromptHandler implements McpPromptHandler {
         this.bindings    = bind(method, where);
         this.arguments   = bindings.stream().filter(b -> b.kind() == Kind.ARGUMENT).map(b -> new PromptArgument(b.name(), null, b.description().isEmpty() ? null : b.description(), b.required())).toList();
         this.returnKind  = returnKind(method, where);
+        this.icons       = Descriptors.icons(prompt.icons(), where);
+        this.meta        = Descriptors.meta(prompt.meta(), where);
         method.setAccessible(true);
     }
 
+
+    @Override
+    public List<Icon> icons() {
+        return icons;
+    }
+
+    @Override
+    public JsonObject meta() {
+        return meta;
+    }
 
     @Override
     public String name() {

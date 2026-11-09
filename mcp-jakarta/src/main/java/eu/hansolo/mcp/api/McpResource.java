@@ -46,4 +46,11 @@ public @interface McpResource {
 
     /** OAuth scopes the caller needs. */
     String[] scopes() default {};
+
+    /** Icon URLs ({@code https}, {@code http} or {@code data:}). Implement the handler interface for icons with a MIME type, sizes or a theme. */
+    String[] icons() default {};
+
+    /** The {@code _meta} object as JSON text, for example {@code "{\"com.example/team\":\"billing\"}"}. Empty means none. */
+    String meta() default "";
+
 }

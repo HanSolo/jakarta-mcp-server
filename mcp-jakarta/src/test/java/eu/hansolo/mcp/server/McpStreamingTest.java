@@ -163,6 +163,63 @@ class McpStreamingTest {
         assertEquals(1, reachedEnd.get());
     }
 
+    @Test
+    void aQuietCallGetsKeepAliveCommentsAndNoneAfterTheResult() throws Exception {
+        McpRequestHandler quick = withKeepAlive(new SlowTool());
+        List<String> lines = new ArrayList<>();
+        McpHttpResponse response = quick.handle(headers("slow", BOTH)::get, stream(body("slow", "1", Json.createObjectBuilder().add("steps", 300).build(), "t")));
+        response.stream().writeTo(recorder(lines, false));
+        assertTrue(lines.stream().filter(l -> l.equals(":keep-alive")).count() >= 3, lines.toString());
+        assertTrue(lines.get(lines.size() - 1).startsWith("{"), "the result is the last thing written: " + lines);
+        assertEquals(1, lines.stream().filter(l -> l.startsWith("{")).count());
+    }
+
+    @Test
+    void aVanishedClientCancelsTheCallThroughTheKeepAlive() throws Exception {
+        SlowTool tool = new SlowTool();
+        McpRequestHandler quick = withKeepAlive(tool);
+        List<String> lines = new ArrayList<>();
+        McpHttpResponse response = quick.handle(headers("slow", BOTH)::get, stream(body("slow", "1", Json.createObjectBuilder().add("steps", 5000).build(), "t")));
+        response.stream().writeTo(recorder(lines, true));
+        assertTrue(tool.sawCancel.get(), "the tool did not see the cancellation");
+        assertTrue(lines.stream().noneMatch(l -> l.startsWith("{")), "nothing is sent for a cancelled call: " + lines);
+    }
+
+    @Test
+    void aFastCallWritesNoComment() throws Exception {
+        McpRequestHandler quick = withKeepAlive(new SlowTool());
+        List<String> lines = new ArrayList<>();
+        McpHttpResponse response = quick.handle(headers("slow", BOTH)::get, stream(body("slow", "1", Json.createObjectBuilder().add("steps", 0).build(), "t")));
+        response.stream().writeTo(recorder(lines, false));
+        assertEquals(1, lines.size(), lines.toString());
+    }
+
+    private static McpRequestHandler withKeepAlive(McpToolHandler tool) {
+        return new McpRequestHandler(McpRegistry.of(List.of(tool)), new McpConfig(null, 4096, 0L, "test", "1", null, 0, 20L, 100, 10));
+    }
+
+    /** Records events as their JSON text and comments as {@code :text}; with {@code failOnComment} a comment fails like a closed connection. */
+    private static McpHttpResponse.EventSink recorder(List<String> lines, boolean failOnComment) {
+        return new McpHttpResponse.EventSink() {
+            @Override
+            public void send(String json) {
+                synchronized (lines) {
+                    lines.add(json);
+                }
+            }
+
+            @Override
+            public void comment(String text) throws IOException {
+                if (failOnComment) {
+                    throw new IOException("connection reset");
+                }
+                synchronized (lines) {
+                    lines.add(":" + text);
+                }
+            }
+        };
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------------------
 
     private McpHttpResponse call(String tool, String id, JsonObject arguments, Object progressToken, String accept) {
@@ -288,6 +345,35 @@ class McpStreamingTest {
             call.progress(2, null, null);
             call.progress(2, null, null);
             return ToolResult.text("unreachable");
+        }
+    }
+
+    /** Works for {@code steps} milliseconds without reporting progress; stops early when the call is cancelled. */
+    private static final class SlowTool extends Base {
+
+        final java.util.concurrent.atomic.AtomicBoolean sawCancel = new java.util.concurrent.atomic.AtomicBoolean();
+
+        @Override
+        public String name() {
+            return "slow";
+        }
+
+        @Override
+        public ToolResult call(ToolCall call) {
+            long end = System.currentTimeMillis() + call.arguments().getInt("steps");
+            while (System.currentTimeMillis() < end) {
+                if (call.isCancelled()) {
+                    sawCancel.set(true);
+                    return ToolResult.text("stopped");
+                }
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            return ToolResult.text("done");
         }
     }
 }

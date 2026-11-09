@@ -21,6 +21,7 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class McpRequestHandlerTest {
@@ -45,6 +46,29 @@ class McpRequestHandlerTest {
         assertEquals("public", result.getString("cacheScope"));
         assertEquals("test-server", result.getJsonObject("_meta").getJsonObject("io.modelcontextprotocol/serverInfo").getString("name"));
         assertEquals(1, json(response).getInt("id"));
+    }
+
+    // ---- custom parameter headers ----------------------------------------------------------------------------------
+
+    @Test
+    void aToolCallMustCarryTheParamHeaderItsSchemaAsksFor() {
+        McpRequestHandler routed = new McpRequestHandler(McpRegistry.of(List.of(new RoutedTool())), config);
+        JsonObject params = Json.createObjectBuilder().add("name", "routed").add("arguments", Json.createObjectBuilder().add("region", "eu")).build();
+        Map<String, String> headers = headers("tools/call", "routed");
+        McpHttpResponse missing = routed.handle(headers::get, new ByteArrayInputStream(body("tools/call", "1", params).getBytes(StandardCharsets.UTF_8)));
+        assertEquals(400, missing.status());
+        assertEquals(ErrorCodes.HEADER_MISMATCH, json(missing).getJsonObject("error").getInt("code"));
+        headers.put("Mcp-Param-Region", "eu");
+        McpHttpResponse ok = routed.handle(headers::get, new ByteArrayInputStream(body("tools/call", "2", params).getBytes(StandardCharsets.UTF_8)));
+        assertEquals(200, ok.status());
+        headers.put("Mcp-Param-Region", "us");
+        McpHttpResponse wrong = routed.handle(headers::get, new ByteArrayInputStream(body("tools/call", "3", params).getBytes(StandardCharsets.UTF_8)));
+        assertEquals(400, wrong.status());
+    }
+
+    @Test
+    void aToolWithAnInvalidAnnotationIsRefusedAtRegistration() {
+        assertThrows(IllegalStateException.class, () -> McpRegistry.of(List.of(new BadHeaderTool())));
     }
 
     // ---- header and metadata validation ----------------------------------------------------------------------------
@@ -369,6 +393,52 @@ class McpRequestHandlerTest {
         @Override
         public ToolResult call(ToolCall call) {
             return ToolResult.text(call.stringArgument("message").orElse(""));
+        }
+    }
+
+    private static final class RoutedTool implements McpToolHandler {
+
+        @Override
+        public String name() {
+            return "routed";
+        }
+
+        @Override
+        public String description() {
+            return "routed";
+        }
+
+        @Override
+        public JsonObject inputSchema() {
+            return Json.createObjectBuilder().add("type", "object").add("properties", Json.createObjectBuilder().add("region", Json.createObjectBuilder().add("type", "string").add("x-mcp-header", "Region"))).build();
+        }
+
+        @Override
+        public ToolResult call(ToolCall call) {
+            return ToolResult.text("ok");
+        }
+    }
+
+    private static final class BadHeaderTool implements McpToolHandler {
+
+        @Override
+        public String name() {
+            return "bad";
+        }
+
+        @Override
+        public String description() {
+            return "bad";
+        }
+
+        @Override
+        public JsonObject inputSchema() {
+            return Json.createObjectBuilder().add("type", "object").add("properties", Json.createObjectBuilder().add("n", Json.createObjectBuilder().add("type", "number").add("x-mcp-header", "N"))).build();
+        }
+
+        @Override
+        public ToolResult call(ToolCall call) {
+            return ToolResult.text("ok");
         }
     }
 

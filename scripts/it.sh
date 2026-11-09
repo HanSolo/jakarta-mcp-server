@@ -10,7 +10,12 @@
 #   scripts/it.sh                                 all three servers: payara, wildfly, liberty
 #   scripts/it.sh --servers payara                one server (or a comma separated list)
 #   scripts/it.sh --no-pull                       do not pull the container images first
+#   scripts/it.sh --conformance                   after the integration tests, run the MCP conformance suite against each server
+#   scripts/it.sh --only-conformance              the conformance suite only (no integration tests)
 #   scripts/it.sh -- -Dmcp.image=payara/micro:7   everything after -- goes to Maven (for every server)
+#
+# The conformance suite (npx @modelcontextprotocol/conformance@alpha, needs Node 22+) runs against the mcp-example-conformance WAR on the
+# same server images, with mcp-example-conformance/expected-failures.yml. A listed scenario that passes counts as a failure here too.
 #
 # Run it from a checkout of the version you want to test (git checkout v0.4.0); the script never changes your checkout.
 # Logs, Failsafe reports and a summary go to it-logs/<timestamp>/. Needs JDK 21+, Maven, and a running Docker.
@@ -30,6 +35,8 @@ DOCKER_JAVA_PROPERTIES="${HOME}/.docker-java.properties"
 
 SERVERS="payara,wildfly,liberty"
 PULL=1
+RUN_IT=1
+RUN_CONFORMANCE=0
 MVN_EXTRA=()
 
 usage() {
@@ -38,6 +45,8 @@ Usage:
   scripts/it.sh                                 all three servers: payara, wildfly, liberty
   scripts/it.sh --servers payara                one server (or a comma separated list)
   scripts/it.sh --no-pull                       do not pull the container images first
+  scripts/it.sh --conformance                   after the integration tests, run the MCP conformance suite against each server
+  scripts/it.sh --only-conformance              the conformance suite only (no integration tests)
   scripts/it.sh -- -Dmcp.image=payara/micro:7   everything after -- goes to Maven (for every server)
 
 Run it from a checkout of the version you want to test. Logs and a summary go to it-logs/<timestamp>/.
@@ -85,6 +94,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --servers)  [ $# -ge 2 ] || die "--servers needs a value"; SERVERS="$2"; shift 2 ;;
         --no-pull)  PULL=0; shift ;;
+        --conformance)      RUN_CONFORMANCE=1; shift ;;
+        --only-conformance) RUN_CONFORMANCE=1; RUN_IT=0; shift ;;
         -h|--help)  usage; exit 0 ;;
         --)         shift; MVN_EXTRA=("$@"); break ;;
         *)          usage >&2; die "unknown option: $1" ;;
@@ -160,6 +171,13 @@ if is_version "$SERVER_API" && is_version "$MIN_API"; then
     fi
 else
     say "could not read the docker engine API version (server '$SERVER_API', minimum '$MIN_API'); continuing"
+fi
+
+if [ "$RUN_CONFORMANCE" -eq 1 ]; then
+    command -v npx >/dev/null 2>&1 || die "npx not found: the conformance suite needs Node 22 or newer"
+    NODE_MAJOR=$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')
+    case "$NODE_MAJOR" in ''|*[!0-9]*) NODE_MAJOR=0 ;; esac
+    [ "$NODE_MAJOR" -ge 22 ] || die "Node 22 or newer is needed for the conformance suite, found: $(node -v 2>/dev/null || echo none)"
 fi
 
 if [ "$PULL" -eq 1 ]; then
@@ -246,8 +264,85 @@ evaluate() {
     [ "$problem" -eq 0 ] || OVERALL=1
 }
 
+# Where each server expects the WAR and which port it listens on (mirrors ServerFixture.java).
+war_path_for() {
+    case "$1" in
+        payara)  echo "/opt/payara/deployments/ROOT.war" ;;
+        wildfly) echo "/opt/jboss/wildfly/standalone/deployments/ROOT.war" ;;
+        liberty) echo "/opt/ol/wlp/usr/servers/defaultServer/apps/ROOT.war" ;;
+    esac
+}
+
+port_for() {
+    case "$1" in
+        liberty) echo 9080 ;;
+        *)       echo 8080 ;;
+    esac
+}
+
+CONFORMANCE_WAR="$ROOT/mcp-example-conformance/target/mcp-conformance.war"
+CONFORMANCE_BUILT=0
+
+# Runs the conformance suite against one server and prints one result line. Sets OVERALL=1 on any problem.
+conformance() {
+    local server=$1 image port container mapped url code status log="$LOGDIR/conformance-$server.log" ready=0 i
+    image=$(image_for "$server")
+    port=$(port_for "$server")
+
+    if [ "$CONFORMANCE_BUILT" -eq 0 ]; then
+        say "building the conformance WAR" >&2
+        if ! mvn -B -ntp -q -DskipTests package -pl mcp-example-conformance -am > "$LOGDIR/conformance-build.log" 2>&1 || [ ! -f "$CONFORMANCE_WAR" ]; then
+            printf '  %-8s %-24s %s\n' "$server" "conformance" "BUILD FAILED: see conformance-build.log"
+            OVERALL=1
+            return
+        fi
+        CONFORMANCE_BUILT=1
+    fi
+
+    container=$(docker create -p "127.0.0.1::$port" "$image" 2>/dev/null) || {
+        printf '  %-8s %-24s %s\n' "$server" "conformance" "FAILED: could not create a container from $image"
+        OVERALL=1
+        return
+    }
+    docker cp "$CONFORMANCE_WAR" "$container:$(war_path_for "$server")" >/dev/null 2>&1
+    if [ "$server" = "liberty" ]; then
+        docker cp "$ROOT/mcp-it/src/test/resources/liberty/server.xml" "$container:/opt/ol/wlp/usr/servers/defaultServer/server.xml" >/dev/null 2>&1
+    fi
+    docker start "$container" >/dev/null 2>&1
+
+    mapped=$(docker port "$container" "$port/tcp" 2>/dev/null | head -1 | sed -E 's/.*:([0-9]+)$/\1/')
+    url="http://127.0.0.1:$mapped/mcp"
+    for i in $(seq 1 90); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "$url" -d '{}' 2>/dev/null || true)
+        if [ -n "$code" ] && [ "$code" != "000" ] && [ "$code" != "404" ]; then
+            ready=1
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$ready" -eq 0 ]; then
+        docker logs "$container" > "$LOGDIR/conformance-$server-container.log" 2>&1
+        printf '  %-8s %-24s %s\n' "$server" "conformance" "FAILED: the application did not answer at $url (container log: conformance-$server-container.log)"
+        OVERALL=1
+    else
+        say "conformance suite against $server at $url (log: conformance-$server.log)" >&2
+        rm -rf "$LOGDIR/conformance-$server-results"
+        npx --yes @modelcontextprotocol/conformance@alpha server --url "$url" --requirements 2026-07-28 --expected-failures "$ROOT/mcp-example-conformance/expected-failures.yml" -o "$LOGDIR/conformance-$server-results" 2>&1 | tee "$log" >&2
+        status=${PIPESTATUS[0]}
+        if [ "$status" -eq 0 ]; then
+            printf '  %-8s %-24s %s\n' "$server" "conformance" "passed (exit 0 with the expected failures)"
+        else
+            printf '  %-8s %-24s %s\n' "$server" "conformance" "FAILED (exit $status): a scenario failed that is not listed, or a listed one passes now; see conformance-$server.log"
+            OVERALL=1
+        fi
+    fi
+    docker rm -f "$container" >/dev/null 2>&1
+}
+
 FIRST=1
 for server in $SERVER_LIST; do
+  if [ "$RUN_IT" -eq 1 ]; then
     say "=== $server: mvn clean verify -Dmcp.server=$server  (log: it-logs/$(basename "$LOGDIR")/$server.log) ==="
     args=(-B -ntp clean verify "-Dmcp.server=$server")
     if [ "$FIRST" -eq 0 ]; then
@@ -256,6 +351,8 @@ for server in $SERVER_LIST; do
     fi
     FIRST=0
 
+    # reports of an earlier run would otherwise be read as this run's when Maven stops before the integration tests (a unit test failed, say)
+    rm -rf "$ROOT/mcp-it/target/failsafe-reports"
     mvn "${args[@]}" ${MVN_EXTRA[@]+"${MVN_EXTRA[@]}"} 2>&1 | tee "$LOGDIR/$server.log"
     mvn_status=${PIPESTATUS[0]}
 
@@ -266,12 +363,17 @@ for server in $SERVER_LIST; do
     # not piped: evaluate sets OVERALL, which a subshell would lose
     evaluate "$server" "$mvn_status" > "$LOGDIR/$server-evaluation.txt"
     tee -a "$SUMMARY" < "$LOGDIR/$server-evaluation.txt"
+  fi
+  if [ "$RUN_CONFORMANCE" -eq 1 ]; then
+    conformance "$server" > "$LOGDIR/$server-conformance-line.txt"
+    tee -a "$SUMMARY" < "$LOGDIR/$server-conformance-line.txt"
+  fi
 done
 
 {
     echo
     if [ "$OVERALL" -eq 0 ]; then
-        echo "RESULT: every integration test class ran and passed."
+        echo "RESULT: everything that was asked for ran and passed."
     else
         echo "RESULT: PROBLEMS FOUND. A green 'BUILD SUCCESS' above does not mean the tests ran; this summary does."
     fi

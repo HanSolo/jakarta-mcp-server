@@ -4,12 +4,35 @@
 
 ### Added
 - **Notification bridge:** `McpNotificationBridge` passes every change announced to `McpNotifications` on to the other server instances, and `McpNotifications.receive(McpChange)` tells the clients of the receiving instance. `McpChange` encodes a change as a short JSON text. A separate thread hands changes to the bridge, so announcing a change still never blocks; the queue holds 1000 changes. See "Several instances" in the README.
+- **`scripts/it.sh --conformance` / `--only-conformance`:** runs the MCP conformance suite against the fixture WAR on each selected server and adds the result to the summary.
 - **`scripts/it.sh`:** runs the integration tests on one or more servers, prepares Docker for Testcontainers, and fails when test classes were skipped instead of reporting `BUILD SUCCESS`.
 
 - **Integration tests** for dynamic registration, argument validation over HTTP, the notification bridge between two instances and token introspection against Keycloak, with the new test-only `mcp-it-fixture` module. Passed on Payara, WildFly and Open Liberty (2026-11-09).
 
+- **Icons and `_meta`:** `icons()` and `meta()` on `McpToolHandler`, `McpPromptHandler`, `McpResourceHandler` and `McpResourceTemplateHandler`, and `icons`/`meta` attributes on `@McpTool`, `@McpPrompt` and `@McpResource`. `Icon` and `Meta` (key validation) are new. Invalid icons or `_meta` keys fail at startup.
+- **Rich content:** `Content` builds text, image, audio, `resource_link` and embedded-resource blocks with annotations; `ToolResult.of(...)`, `ToolResult.structured(data, blocks...)` and `ToolResult.Complete.withMeta(...)`; `ResourceContent.withMeta(...)` and `ResourceContent.toJson()`.
+
+- **Extensions:** `McpExtension` beans are announced in `server/discover` (`capabilities.extensions`); `ToolCall`, `ResourceCall` and `PromptCall` get `clientExtension(id)` and `requireClientExtension(id)` (error -32021 when missing). `McpExtensions` is the registry; `Extensions` has the id check. `ExtensionsIT` added (passes on all three servers).
+
+- **MCP Apps:** `Apps` (tool binding, resource meta builder with validated CSP origins, `Apps.html`, `Apps.clientSupports`), `McpAppsExtension`, `mcp.apps.enabled`, `ToolCall.clientSupportsApps()`. A tool whose `_meta.ui.resourceUri` names a missing resource now fails at startup. New example module `mcp-example-apps` (a page that speaks the host `postMessage` protocol, shows the tool result and refreshes through the app-only tool `refresh_clock`) and `AppsIT` (5 tests, passes on all three servers).
+
+- **Trace context:** `TraceContext` (`traceparent`, `tracestate`, `baggage` from the request's `_meta`, validated, with `child()` and `toJson()` for forwarding) and `trace()` on `ToolCall`, `PromptCall`, `ResourceCall` and `CompletionCall`. The call records gained a `trace` component; the old constructors still exist.
+
+- **Elicitation:** `Elicitation` (form builder for the specification's schema subset, URL requests, `answer`, `Form.problems` to check an answer, `supports` for the declared modes), `InputRequests`, `ToolResult.ask`, `PromptResult.ask`, `ResourceResult.ask`, and `clientSupportsElicitation(mode)` on the call records. Form mode refuses property names and texts that look like sensitive data. The conformance fixtures use it. `ElicitationIT` added.
+
+- **Keep-alive on streamed `tools/call`:** while a streamed call runs, the server writes an SSE comment line whenever the stream has been quiet for `mcp.listen.keepalive-ms`. A failed write cancels the call even if the tool reports no progress; `ToolCall.isCancelled()` and `ProgressReporter.isCancelled()` tell the tool. `KeepAliveIT` added.
+
+- **Parameter headers:** the `x-mcp-header` schema annotation and `Mcp-Param-*` request headers. The server checks the headers against the arguments on `tools/call` (HTTP 400, `-32020`) and refuses invalid annotations at registration; `@McpParam(header = ...)` emits the annotation. New fixture tool `routed_echo` and `ParamHeadersIT`; the conformance fixture has `test_custom_header` (name unconfirmed).
+
+### Fixed
+- `McpAppsExtension` is now `@Vetoed`. The library archive uses bean discovery mode `all`, so the container registered the base class as a bean as well as any subclass, and the server failed with "Duplicate MCP extension 'io.modelcontextprotocol/ui'" at the first request (found by `AppsIT` on Payara).
+
 ### Changed
+- `McpRequestHandler` has a new constructor with a sixth parameter, `McpExtensions`, which CDI uses; the old constructors still work and announce no extensions.
+- `ToolResult.Complete` and `ResourceContent` gained a `meta` component; the old constructors still exist. Code that deconstructs these records with a record pattern needs the extra component.
+- The `_meta` of a tool result now keeps what the tool put there; the server's `serverInfo` key is added on top.
 - `McpNotifications` has a second constructor, `McpNotifications(McpConfig, Instance<McpNotificationBridge>)`, which CDI uses; `McpNotifications(McpConfig)` still works and has no bridge.
+- `scripts/it.sh` deletes old Failsafe reports before each run, so a summary can no longer show results of an earlier run.
 - `McpRegistrations` tells the clients of its own instance only and does not publish to a bridge: the registry is per instance, so make the same registration call on every instance.
 
 ## 0.4.0

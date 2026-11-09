@@ -2,6 +2,7 @@ package eu.hansolo.mcp.api;
 
 import jakarta.json.JsonObject;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -35,6 +36,16 @@ public interface McpResourceHandler {
 
     /** Resource annotations ({@code audience}, {@code priority}, {@code lastModified}), or null. */
     default JsonObject annotations() {
+        return null;
+    }
+
+    /** Icons clients may show next to the name, or an empty list. */
+    default List<Icon> icons() {
+        return List.of();
+    }
+
+    /** Optional {@code _meta} object listed with this resource (extensions such as MCP Apps define keys here), or null. */
+    default JsonObject meta() {
         return null;
     }
 

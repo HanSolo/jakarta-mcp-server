@@ -5,6 +5,7 @@ import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonString;
 import jakarta.json.JsonValue;
+import eu.hansolo.mcp.api.Elicitation;
 
 import java.util.Optional;
 
@@ -15,11 +16,15 @@ final class Requests {
     }
 
 
-    /** An elicitation asking for one property of the given JSON Schema type. */
+    /** An elicitation asking for one required property of the given JSON Schema type ({@code string} or {@code boolean}), built with the library. */
     static JsonObject elicit(String message, String property, String type) {
-        JsonObject schema = Json.createObjectBuilder().add("type", "object").add("properties", Json.createObjectBuilder().add(property, Json.createObjectBuilder().add("type", type))).add("required", Json.createArrayBuilder().add(property)).build();
-        JsonObject params = Json.createObjectBuilder().add("mode", "form").add("message", message).add("requestedSchema", schema).build();
-        return Json.createObjectBuilder().add("method", "elicitation/create").add("params", params).build();
+        Elicitation.Form form = Elicitation.form(message);
+        if (type.equals("boolean")) {
+            form.bool(property, p -> p.required());
+        } else {
+            form.string(property, p -> p.required());
+        }
+        return form.toJson();
     }
 
     static JsonObject sample(String prompt, int maxTokens) {
@@ -44,9 +49,9 @@ final class Requests {
         return Optional.empty();
     }
 
-    /** A string property of an accepted elicitation answer. */
+    /** A string property of an accepted elicitation answer, read with the library. */
     static Optional<String> acceptedString(JsonObject responses, String key, String property) {
-        return accepted(responses, key).map(c -> c.get(property)).filter(JsonString.class::isInstance).map(v -> ((JsonString) v).getString());
+        return Elicitation.answer(responses, key).filter(Elicitation.Answer::accepted).flatMap(answer -> answer.string(property));
     }
 
     /** The text of a sampling answer: {@code content.text}, or a plain {@code text}. */

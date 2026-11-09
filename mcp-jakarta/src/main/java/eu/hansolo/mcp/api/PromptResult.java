@@ -36,4 +36,9 @@ public sealed interface PromptResult permits PromptResult.Complete, PromptResult
     static InputRequired inputRequired(JsonObject inputRequests, String requestState) {
         return new InputRequired(inputRequests, requestState);
     }
+
+    /** Asks the client for input ({@link Elicitation}) and has it retry the request with the answers. */
+    static InputRequired ask(InputRequests requests, String requestState) {
+        return new InputRequired(requests.toJson(), requestState);
+    }
 }

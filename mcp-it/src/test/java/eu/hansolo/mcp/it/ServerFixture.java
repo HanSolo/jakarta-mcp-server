@@ -107,6 +107,11 @@ final class ServerFixture {
         return container;
     }
 
+    /** The MCP Apps example WAR. */
+    static Path appsWar() {
+        return Path.of(System.getProperty("mcp.apps.war", "../mcp-example-apps/target/mcp-example-apps.war"));
+    }
+
     /** The test-only fixture WAR (admin endpoint, HTTP bridge, tool with a nested schema). */
     static Path fixtureWar() {
         return Path.of(System.getProperty("mcp.fixture.war", "../mcp-it-fixture/target/mcp-it-fixture.war"));

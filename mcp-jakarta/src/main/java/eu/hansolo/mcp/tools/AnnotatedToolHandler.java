@@ -5,6 +5,7 @@ import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
 import eu.hansolo.mcp.api.Caller;
+import eu.hansolo.mcp.api.Icon;
 import eu.hansolo.mcp.api.McpParam;
 import eu.hansolo.mcp.api.McpTool;
 import eu.hansolo.mcp.api.McpToolHandler;
@@ -31,6 +32,8 @@ public final class AnnotatedToolHandler implements McpToolHandler {
     private final JsonObject    inputSchema;
     private final JsonObject    outputSchema;
     private final JsonObject    annotations;
+    private final List<Icon>    icons;
+    private final JsonObject    meta;
     private final Method        method;
     private final List<Binding> bindings;
     private final BeanSource    source;
@@ -49,9 +52,21 @@ public final class AnnotatedToolHandler implements McpToolHandler {
         this.inputSchema  = inputSchema(bindings, where);
         this.outputSchema = ResultMapper.hasOutputSchema(method.getReturnType()) ? SchemaGenerator.schemaFor(method.getGenericReturnType()) : null;
         this.annotations  = annotations(tool);
+        this.icons        = Descriptors.icons(tool.icons(), where);
+        this.meta         = Descriptors.meta(tool.meta(), where);
         method.setAccessible(true);
     }
 
+
+    @Override
+    public List<Icon> icons() {
+        return icons;
+    }
+
+    @Override
+    public JsonObject meta() {
+        return meta;
+    }
 
     @Override
     public String name() {
@@ -122,9 +137,9 @@ public final class AnnotatedToolHandler implements McpToolHandler {
         for (Parameter parameter : method.getParameters()) {
             Type type = parameter.getParameterizedType();
             if (parameter.getType() == ToolCall.class) {
-                result.add(new Binding(Kind.CALL, null, type, false, ""));
+                result.add(new Binding(Kind.CALL, null, type, false, "", ""));
             } else if (parameter.getType() == Caller.class) {
-                result.add(new Binding(Kind.CALLER, null, type, false, ""));
+                result.add(new Binding(Kind.CALLER, null, type, false, "", ""));
             } else {
                 McpParam info = parameter.getAnnotation(McpParam.class);
                 String parameterName = info != null && !info.name().isEmpty() ? info.name() : parameter.getName();
@@ -137,7 +152,7 @@ public final class AnnotatedToolHandler implements McpToolHandler {
                     throw new IllegalStateException(where + ": duplicate parameter name '" + parameterName + "'");
                 }
                 try {
-                    result.add(new Binding(Kind.ARGUMENT, parameterName, type, SchemaGenerator.isRequired(type, info), info == null ? "" : info.description()));
+                    result.add(new Binding(Kind.ARGUMENT, parameterName, type, SchemaGenerator.isRequired(type, info), info == null ? "" : info.description(), info == null ? "" : info.header()));
                 } catch (IllegalStateException e) {
                     throw new IllegalStateException(where + ", parameter '" + parameterName + "': " + e.getMessage(), e);
                 }
@@ -155,7 +170,7 @@ public final class AnnotatedToolHandler implements McpToolHandler {
                 continue;
             }
             try {
-                properties.add(binding.name(), SchemaGenerator.withDescription(SchemaGenerator.schemaFor(binding.type()), binding.description()));
+                properties.add(binding.name(), SchemaGenerator.withHeader(SchemaGenerator.withDescription(SchemaGenerator.schemaFor(binding.type()), binding.description()), binding.header()));
             } catch (IllegalStateException e) {
                 throw new IllegalStateException(where + ", parameter '" + binding.name() + "': " + e.getMessage(), e);
             }
@@ -195,6 +210,6 @@ public final class AnnotatedToolHandler implements McpToolHandler {
     }
 
 
-    private record Binding(Kind kind, String name, Type type, boolean required, String description) {
+    private record Binding(Kind kind, String name, Type type, boolean required, String description, String header) {
     }
 }

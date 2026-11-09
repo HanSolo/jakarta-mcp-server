@@ -12,10 +12,17 @@ import java.util.Map;
  * @param argument         the argument (prompt) or template variable being completed
  * @param value            what the user has typed so far, possibly empty
  * @param contextArguments values the user already chose for the other arguments, possibly empty
+ * @param trace            the OpenTelemetry trace context of the request, never null
  */
-public record CompletionCall(McpCompletionHandler.Kind kind, String target, String argument, String value, Map<String, String> contextArguments, JsonObject clientCapabilities, JsonObject clientInfo, Caller caller) {
+public record CompletionCall(McpCompletionHandler.Kind kind, String target, String argument, String value, Map<String, String> contextArguments, JsonObject clientCapabilities, JsonObject clientInfo, Caller caller, TraceContext trace) {
 
     public CompletionCall {
         contextArguments = Map.copyOf(contextArguments);
+        trace            = trace == null ? TraceContext.EMPTY : trace;
+    }
+
+    /** A call without trace context. */
+    public CompletionCall(McpCompletionHandler.Kind kind, String target, String argument, String value, Map<String, String> contextArguments, JsonObject clientCapabilities, JsonObject clientInfo, Caller caller) {
+        this(kind, target, argument, value, contextArguments, clientCapabilities, clientInfo, caller, TraceContext.EMPTY);
     }
 }

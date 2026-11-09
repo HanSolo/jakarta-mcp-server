@@ -34,4 +34,9 @@ public interface ProgressReporter {
 
     /** True if reports reach a client. */
     boolean isActive();
+
+    /** True once the server has noticed that the client closed the stream. The next {@link #report} throws {@link RequestCancelledException}. */
+    default boolean isCancelled() {
+        return false;
+    }
 }

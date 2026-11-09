@@ -43,6 +43,19 @@
         </dependency>
         <dependency>
             <groupId>eu.hansolo.mcp</groupId>
+            <artifactId>mcp-example-apps</artifactId>
+            <version>${project.version}</version>
+            <type>war</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>eu.hansolo.mcp</groupId>
             <artifactId>mcp-it-fixture</artifactId>
             <version>${project.version}</version>
             <type>war</type>
@@ -92,6 +105,7 @@
                     <systemPropertyVariables>
                         <mcp.war>${project.basedir}/../mcp-example/target/mcp-example.war</mcp.war>
                         <mcp.tickets.war>${project.basedir}/../mcp-example-tickets/target/mcp-example-tickets.war</mcp.tickets.war>
+                        <mcp.apps.war>${project.basedir}/../mcp-example-apps/target/mcp-example-apps.war</mcp.apps.war>
                         <mcp.fixture.war>${project.basedir}/../mcp-it-fixture/target/mcp-it-fixture.war</mcp.fixture.war>
                         <mcp.server>${mcp.server}</mcp.server>
                         <mcp.image>${mcp.image}</mcp.image>

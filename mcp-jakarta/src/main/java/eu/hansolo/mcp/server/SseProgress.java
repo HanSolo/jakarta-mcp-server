@@ -63,7 +63,13 @@ final class SseProgress implements ProgressReporter {
         return true;
     }
 
-    synchronized boolean isCancelled() {
+    @Override
+    public synchronized boolean isCancelled() {
         return cancelled;
+    }
+
+    /** The keep-alive found the client gone. */
+    synchronized void cancel() {
+        cancelled = true;
     }
 }

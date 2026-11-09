@@ -23,4 +23,11 @@ public @interface McpParam {
      * parameter to receive null when it is missing; primitives cannot be optional (use the wrapper type or {@code Optional}).
      */
     boolean required() default true;
+
+    /**
+     * Mirrors the argument into the request header {@code Mcp-Param-<header>} (the {@code x-mcp-header} schema annotation), so that
+     * gateways can route on it. Only for string, integer and boolean parameters that are direct parameters of the tool method or of
+     * nested records, never inside lists. Empty means no header.
+     */
+    String header() default "";
 }

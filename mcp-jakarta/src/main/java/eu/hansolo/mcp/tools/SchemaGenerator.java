@@ -96,7 +96,7 @@ public final class SchemaGenerator {
         for (RecordComponent component : record.getRecordComponents()) {
             McpParam info = component.getAnnotation(McpParam.class);
             String name = info != null && !info.name().isEmpty() ? info.name() : component.getName();
-            properties.add(name, withDescription(schema(component.getGenericType(), path), info == null ? "" : info.description()));
+            properties.add(name, withHeader(withDescription(schema(component.getGenericType(), path), info == null ? "" : info.description()), info == null ? "" : info.header()));
             if (isRequired(component.getGenericType(), info)) {
                 required.add(name);
                 anyRequired = true;
@@ -113,6 +113,11 @@ public final class SchemaGenerator {
     /** Adds a description to an existing schema object. */
     public static JsonObject withDescription(JsonObject schema, String description) {
         return description == null || description.isEmpty() ? schema : Json.createObjectBuilder(schema).add("description", description).build();
+    }
+
+    /** Adds the {@code x-mcp-header} annotation to an existing schema object. */
+    public static JsonObject withHeader(JsonObject schema, String header) {
+        return header == null || header.isEmpty() ? schema : Json.createObjectBuilder(schema).add("x-mcp-header", header).build();
     }
 
     /** Required unless it is an {@code Optional}, or an object type explicitly marked {@code required = false}. */

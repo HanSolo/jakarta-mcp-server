@@ -104,6 +104,11 @@ public class ConformanceBeans {
     }
 
     @Produces
+    McpToolHandler testCustomHeaderTool() {
+        return tools.get("test_custom_header");
+    }
+
+    @Produces
     McpToolHandler jsonSchema202012ToolTool() {
         return tools.get("json_schema_2020_12_tool");
     }

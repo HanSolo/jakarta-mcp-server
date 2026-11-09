@@ -39,15 +39,6 @@ public record PromptMessage(String role, JsonObject content) {
     }
 
     public static JsonObject embeddedResource(ResourceContent content) {
-        var resource = Json.createObjectBuilder().add("uri", content.uri());
-        if (content.mimeType() != null) {
-            resource.add("mimeType", content.mimeType());
-        }
-        if (content.text() != null) {
-            resource.add("text", content.text());
-        } else {
-            resource.add("blob", content.blob());
-        }
-        return Json.createObjectBuilder().add("type", "resource").add("resource", resource).build();
+        return Content.resource(content);
     }
 }

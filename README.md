@@ -10,7 +10,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 
 - **What has been run:** `mvn verify` of the original server (discover, tools/list, tools/call, MRTR) passed on the author's machine, and the server was exercised with MCP Inspector (`--protocol-era modern`) and curl against Payara Micro.
 - **Verified on the author's machine (macOS, Docker Desktop 29, Payara Micro 7.2026.10 Build 18 via `payara/micro:latest`, Keycloak 26.4):** `mvn clean verify` passed with 145 unit tests and 46 integration tests (30 in `McpServerIT` at the time, 34 now with the completion tests, 9 in `McpAuthServerIT` with a test issuer, 7 in `McpKeycloakIT` with a real Keycloak). That covers CDI scanning of `@McpTool` / `@McpResource` / `@McpPrompt` beans, the well-known metadata endpoint, 401/403 challenges, audience binding, MRTR and the `eu.hansolo.mcp` rename.
-- **Integration run of 2026-11-09 (`scripts/it.sh`; the author has seen the logs):** 97 integration tests passed on Payara (`payara/micro:latest`) and on WildFly (`quay.io/wildfly/wildfly:latest-jdk21`), and 87 on Open Liberty (`full-java21-openj9-ubi-minimal`; the tickets test is skipped there by design). Per class: `McpServerIT` 41, `McpAsyncListenIT` 3, `McpAuthServerIT` 9, `McpKeycloakIT` 7, `McpTicketsKeycloakIT` 10, `DynamicRegistrationIT` 5, `ArgumentValidationIT` 11, `IntrospectionIT` 6, `NotificationBridgeIT` 5. Setup: macOS, Docker Desktop 29.9.2, JDK 25 compiling to release 21, Keycloak 26.4, Testcontainers 2.0.1. The tested tree was v0.4.0 plus the unreleased notification bridge, the script and the new tests (`v0.4.0-dirty`), not the bare tag.
+- **Integration run of 2026-11-09 (`scripts/it.sh`; the author has seen the logs):** 107 integration tests passed on Payara (`payara/micro:latest`) and on WildFly (`quay.io/wildfly/wildfly:latest-jdk21`), and 97 on Open Liberty (`full-java21-openj9-ubi-minimal`; the tickets test is skipped there by design). Per class: `McpServerIT` 41, `McpAsyncListenIT` 3, `McpAuthServerIT` 9, `McpKeycloakIT` 7, `McpTicketsKeycloakIT` 10, `DynamicRegistrationIT` 5, `ArgumentValidationIT` 11, `IntrospectionIT` 6, `NotificationBridgeIT` 5, `ExtensionsIT` 5, `AppsIT` 5. Setup: macOS, Docker Desktop 29.9.2, JDK 25 compiling to release 21, Keycloak 26.4, Testcontainers 2.0.1. The tested tree was v0.4.0 plus the unreleased notification bridge, the script and the new tests (`v0.4.0-1-g9e1dbfe-dirty`), not the bare tag. The run of 09:27 does not include the trace-context support, which has unit tests only.
 - **Tickets example:** `mvn clean verify` passes on Payara with Keycloak (178 unit tests at that time, 8 tickets integration tests). Passes on WildFly (reported by the user). **Open Liberty:** the tickets example does not start there without a data source: Liberty creates a container-managed `EntityManagerFactory` for `@PersistenceUnit` and looks for `java:comp/DefaultDataSource` instead of using the `jakarta.persistence.jdbc.*` properties of the example's resource-local unit. The tickets integration test is therefore skipped on Liberty. A `<dataSource id="DefaultDataSource">` in `server.xml` with the H2 jar on the server should fix it (untested).
 - **Streaming (progress notifications over SSE):** passes on Payara (`mvn clean verify`, 4 streaming integration tests, including one that proves events arrive while the tool is still running and one that resets the connection and checks that the tool is told). The first version, a JAX-RS `StreamingOutput`, was buffered by Jersey; the servlet-based version fixed that. WildFly and Open Liberty: passed in the run of 2026-11-09 (see above).
 - **Notifications (`subscriptions/listen`, list-changed, resource updates):** passes on Payara (13 unit tests, 3 integration tests in `McpServerIT`, 2 in `McpTicketsKeycloakIT`). WildFly and Open Liberty: passed in the run of 2026-11-09 (see above).
@@ -29,6 +29,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 | `mcp-example` | WAR deployed at the context root: annotated tools (`echo`, `add`, `repeat`), a handler-style tool (`greet`, multi round-trip), a resource (`config://server/info`), a template (`greeting://{name}`) and a prompt (`summarize`) |
 | `mcp-example-tickets` | A realistic example: a support-ticket service with a database, scopes and a confirmation step (see [The tickets example](#the-tickets-example)). Needs authentication |
 | `mcp-example-conformance` | A fixture WAR with the tools, prompts and resources the official conformance suite expects (see [Conformance suite](#conformance-suite)). A test aid, not an example to copy |
+| `mcp-example-apps` | The MCP Apps example: `show_clock` returns text and structured time and names a `ui://` page that supporting clients display (see [MCP Apps](#mcp-apps)) |
 | `mcp-it-fixture` | A test-only WAR: an **unauthenticated** admin endpoint (add and remove tools, announce changes, receive a change), a bridge that POSTs changes to peer instances, and a tool with a nested `oneOf` schema. Used by the integration tests; never deploy it |
 | `mcp-it` | Integration tests: starts the example WAR in a Payara Micro, WildFly or Open Liberty container with Testcontainers |
 
@@ -72,7 +73,7 @@ java -jar payara-micro-7.x.jar --deploy mcp-example/target/mcp-example.war
 
 Integration tests (`*IT`) run in the `verify` phase through Failsafe and are **skipped, not failed, when Docker is unavailable**.
 
-`scripts/it.sh` runs the integration tests against one or more servers (`scripts/it.sh --servers wildfly`; default is all three) and does not trust `BUILD SUCCESS`: it checks that Docker is usable for Testcontainers (it adds `api.version` to `~/.docker-java.properties` when the engine needs it, and points `DOCKER_HOST` at the active docker context when there is no `/var/run/docker.sock`), pulls the images, runs `mvn clean verify -Dmcp.server=<server>`, reads the Failsafe reports and fails when a test class was skipped, did not run, or failed. Logs, reports and a `summary.txt` (with the image digests) go to `it-logs/<timestamp>/`. Run it from a checkout of the version you want to test. It was written against stand-in `docker` and `mvn` commands and has run once for real: macOS, Docker Desktop 29.9.2, all three servers.
+`scripts/it.sh` runs the integration tests against one or more servers (`scripts/it.sh --servers wildfly`; default is all three) and does not trust `BUILD SUCCESS`: it checks that Docker is usable for Testcontainers (it adds `api.version` to `~/.docker-java.properties` when the engine needs it, and points `DOCKER_HOST` at the active docker context when there is no `/var/run/docker.sock`), pulls the images, runs `mvn clean verify -Dmcp.server=<server>`, reads the Failsafe reports and fails when a test class was skipped, did not run, or failed. Logs, reports and a `summary.txt` (with the image digests) go to `it-logs/<timestamp>/`. `scripts/it.sh --conformance` also runs the MCP conformance suite (`npx @modelcontextprotocol/conformance@alpha`, Node 22+) against the `mcp-example-conformance` WAR on each selected server, with `expected-failures.yml`; `--only-conformance` skips the integration tests. The conformance part has not been run on any machine yet, and WildFly and Open Liberty are untested for it (the CI job uses Payara only). Run it from a checkout of the version you want to test. It was written against stand-in `docker` and `mvn` commands and has run once for real: macOS, Docker Desktop 29.9.2, all three servers.
 
 ### Integration tests and Docker troubleshooting
 
@@ -313,7 +314,7 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 | `mcp.listen.executor` | none | JNDI name of a managed executor to run those streams on instead of JDK virtual threads |
 | `mcp.request-state.secret` | random per instance | HMAC key for `McpRequestStates` (see Writing tools). Set the same value on every node of a cluster, or a state issued by one node is refused by another |
 | `mcp.request-state.ttl-ms` | 600000 | How long a signed request state stays valid |
-| `mcp.listen.keepalive-ms` | 15000 | How often an idle stream gets a comment line; this is also how a vanished client is noticed and its thread released |
+| `mcp.listen.keepalive-ms` | 15000 | How often an idle stream gets a comment line (`subscriptions/listen` streams and streamed `tools/call`); this is also how a vanished client is noticed and its thread released |
 | `mcp.server.name`, `mcp.server.version` | from build | Identity returned in `_meta` and discovery |
 | `mcp.instructions` | none | Guidance for the model, returned by `server/discover` |
 | `mcp.auth.enabled` | false | Turn on bearer-token authentication |
@@ -377,10 +378,11 @@ public String reindex(ToolCall call) {
 What the client sees: zero or more `notifications/progress` events, then the JSON-RPC response as the last event, then the stream ends. Details worth knowing:
 
 - **Errors before the tool runs keep their HTTP status.** Authentication, headers, unknown tool, missing scope and invalid arguments are checked first and answered as ordinary JSON (400, 401, 403, or 200 with a JSON-RPC error). Only after the tool has started is the status fixed at 200; a failure then arrives as the final event (an error result or a JSON-RPC error).
-- **Closing the connection cancels the request.** The server notices on its next write: `call.progress(...)` then throws `RequestCancelledException`, which a tool should let propagate. A tool that never reports progress cannot be cancelled this way, because nothing is written. The server sends nothing more for a cancelled request.
+- **Closing the connection cancels the request.** The server notices on its next write: `call.progress(...)` then throws `RequestCancelledException`, which a tool should let propagate, and `call.isCancelled()` turns true. While the tool runs, the server also writes an SSE comment line whenever the stream has been quiet for `mcp.listen.keepalive-ms` (default 15 s), so a tool that reports no progress is noticed as cancelled within about one interval; it can poll `call.isCancelled()` in its loops. The server sends nothing more for a cancelled request.
 - **Progress must increase** with every report of one call (the spec requires it); a repeated or smaller value throws `IllegalArgumentException`, which counts as a tool failure.
 - **Only `tools/call`.** Other methods are always plain JSON. There is no resumption (`Last-Event-ID` is ignored, as the spec says). Long-lived notification streams are `subscriptions/listen` (see Notifications).
-- **The tool runs on the request thread** while the response is open, so a long call holds a container thread. Keep the call as short as the work allows; there is no keep-alive comment, so very long silences may be cut by proxies with idle timeouts.
+- **The tool runs on the request thread** while the response is open, so a long call holds a container thread. Keep the call as short as the work allows. The keep-alive comment lines (see above) stop a proxy with an idle timeout from cutting a long silent call, as long as `mcp.listen.keepalive-ms` is below that timeout; a call that does not stream (no progress token, or no `text/event-stream` in `Accept`) has no keep-alive. Each streamed call starts one short-lived virtual thread for it.
+- **Status of the keep-alive:** unit-tested (3 tests in `McpStreamingTest`: comments during a quiet call and none after the result, a failed comment write cancelling the call, no comment for a fast call). `KeepAliveIT` (2 tests, fixture tool `quiet`, interval 200 ms: comments arrive while the tool runs, not at the end) is written and has not been run.
 - **How it is written:** straight to the servlet response (needs the Servlet API, part of the Web Profile), not through JAX-RS, because Jersey ignores `flush()` on a `StreamingOutput` and delivers the whole entity at the end. The server flushes after every event and sends `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`. A reverse proxy in front may still buffer; turn that off for `/mcp`.
 
 The `countdown` tool in `mcp-example` shows it (`steps`, `delayMs`); try it with curl:
@@ -480,6 +482,152 @@ Before a tool runs, its arguments are checked against the tool's `inputSchema`; 
 
 Checked: `type`, `enum`, `const`, `allOf`, `anyOf`, `oneOf`, `not`, `if`/`then`/`else`; `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`; `minLength`, `maxLength`, `pattern`; `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `contains`, `minContains`, `maxContains`; `properties`, `required`, `additionalProperties`, `patternProperties`, `propertyNames`, `minProperties`, `maxProperties`, `dependentRequired`; and `$ref` inside the schema (`#`, `#/$defs/name`, `$anchor`). Not checked: `format` (an annotation unless you ask otherwise), `unevaluatedProperties`, `unevaluatedItems`, other unknown keywords, and `$ref` to anything outside the schema (never fetched, so it is skipped). `pattern` uses `java.util.regex`, unanchored; a pattern that does not compile is skipped. Messages never repeat values the client sent. Check what a schema cannot express yourself.
 
+## Icons, `_meta` and rich content
+
+**Icons and `_meta` on tools, prompts, resources and templates.** Every handler interface has two optional methods, `icons()` (a list of `Icon`) and `meta()` (a `JsonObject`), and the annotations have matching attributes:
+
+```java
+@McpTool(description = "Revenue chart",
+         icons = {"https://example.com/chart.png"},
+         meta = "{\"ui\":{\"resourceUri\":\"ui://revenue\"}}")
+public ToolResult chart(String quarter) { ... }
+```
+
+The annotation attributes take URLs and JSON text. An icon with a MIME type, sizes or a theme (`new Icon(src, "image/png", List.of("48x48"), "dark")`) needs the handler interface. Icon sources must be `https`, `http` or `data:` URIs: `javascript:` and `file:` are refused at startup, as are `_meta` keys that break the spec's `prefix/name` rules (`Meta.validate`). Keys under the reserved `io.modelcontextprotocol/` prefix are allowed, because extensions define them, but the library gives them no meaning.
+
+**Content blocks.** `Content` builds the blocks of a tool result or a prompt message, with optional annotations (`audience`, `priority`, `lastModified`) and `_meta`:
+
+```java
+return ToolResult.of(
+        Content.text("March report"),
+        Content.image(png, "image/png"),
+        Content.resourceLink("report://2026-03", "March report").mimeType("application/pdf").size(48_213).build());
+```
+
+`ToolResult.structured(data, blocks...)` returns blocks plus structured content, and `new ToolResult.Complete(...).withMeta(meta)` sets the result's `_meta`. The server adds `io.modelcontextprotocol/serverInfo` to that object and its value wins over a handler's. `ResourceContent.withMeta(...)` sets the `_meta` of one piece of resource content, which is where MCP Apps put their `ui` settings.
+
+Status: unit-tested (15 tests in `McpDescriptorsTest`, 2 in `AnnotatedToolHandlerTest`); no integration test yet, and no example application uses it. The sandbox that wrote this had no way to check the shapes against a real client.
+
+## Elicitation
+
+A tool, prompt or resource can ask the user for input in the middle of a request. In 2026-07-28 this is a Multi Round-Trip Request: the handler returns `ToolResult.ask(...)` (`PromptResult.ask`, `ResourceResult.ask`), the client asks the user and retries the same call with `inputResponses`, and the handler reads the answer. Nothing is kept on the server between the two calls.
+
+```java
+public ToolResult call(ToolCall call) {
+    Optional<Elicitation.Answer> answer = Elicitation.answer(call.inputResponses(), "contact");
+    if (answer.isEmpty()) {
+        if (!call.clientSupportsElicitation(Elicitation.Mode.FORM)) {
+            return ToolResult.error("Pass the email address as an argument; this client cannot ask the user.");
+        }
+        Elicitation.Form form = Elicitation.form("Where can we reach you?")
+                .string("email", p -> p.format("email").required())
+                .integer("age", p -> p.minimum(18));
+        return ToolResult.ask(InputRequests.of("contact", form), null);
+    }
+    if (!answer.get().accepted()) {
+        return ToolResult.text("No problem.");                      // declined or cancelled
+    }
+    return ToolResult.text("Sending to " + answer.get().string("email").orElseThrow());
+}
+```
+
+- **Form mode** (`Elicitation.form`): a flat object of `string` (with `minLength`, `maxLength`, `format` of `email`, `uri`, `date`, `date-time`), `number`, `integer` (`minimum`, `maximum`), `bool`, `choice` (one of a list, optionally with display titles) and `multiChoice` (`minItems`, `maxItems`), each with `title`, `description`, `required` and a default. That is the subset the specification allows. Settings that do not fit a type throw when the form is built.
+- **The user's answer is client input.** `form.problems(answer)` checks required properties, types, ranges, formats and allowed values and returns the problems; ask again (a new `ToolResult.ask`) instead of failing the call. `Elicitation.answer` returns empty for a missing or malformed answer, so the same code path covers the first attempt and a bad retry. `accepted()`, `declined()` and `cancelled()` are the three actions; anything else counts as cancelled.
+- **Sensitive data.** The specification forbids asking for passwords, API keys, tokens or payment data in form mode. `Elicitation.form` throws for property names, titles, descriptions and messages that look like that (`password`, `secret`, `api key`, `access token`, `credential`, `card number`, `cvv` ...). This is a heuristic, not a guarantee, and it has no switch to turn it off. Use URL mode for such data.
+- **URL mode** (`Elicitation.url(message, url)`): the user is sent to a page of yours and the data never reaches the client. The URL must be absolute `https` (or `http` for local development) and carry no user info. It must also hold no personal data and not be pre-authenticated, and your page must check that whoever opens it is the user the request was made for. The client's `accept` only means the user agreed to open the page; keep a signed `requestState` (`McpRequestStates`, see above) and check on the retry whether the work there is finished, or ask again.
+- **Capabilities.** `call.clientSupportsElicitation(mode)` follows the specification: `elicitation: {}` means form only, `form` and `url` declare each mode. Ask only for modes the client declared; the library does not stop you.
+- **Several requests at once:** `InputRequests.of("a", ...).add("b", ...)`. Keys must be unique and come back as the keys of `inputResponses`.
+
+Sampling and roots requests are not part of this API: the specification deprecates both, and the conformance fixtures still build them by hand.
+
+Status: unit-tested (`ElicitationTest`, 12 tests). `ElicitationIT` (7 tests, fixture WAR: form, bad answer, decline, no capability, URL mode with a signed state, tampered state): in the run of 2026-11-09 09:45 six tests passed on Payara, WildFly and Open Liberty; the URL-mode test failed on all three because of a bug in the test itself (one JSON builder added under two keys, which Parsson empties), fixed since and not yet re-run. The conformance fixtures now build their elicitation requests and read their answers with this API (the conformance suite was not re-run). The form schema subset and the URL rules come from the 2026-07-28 elicitation page; the sensitive-word list is my own.
+
+## Parameter headers (`x-mcp-header`)
+
+A tool can ask clients to copy chosen arguments into request headers, so that a gateway or load balancer can route on them without parsing the body. Annotate the property in the `inputSchema`:
+
+```json
+{"type": "object", "properties": {"region": {"type": "string", "x-mcp-header": "Region"}}}
+```
+
+or, for `@McpTool` methods, `@McpParam(header = "Region") String region`. A client then sends `Mcp-Param-Region: eu-west1` next to the usual `Mcp-Method` and `Mcp-Name`. The server compares the headers with the body on every `tools/call`, before the arguments are validated, and answers HTTP 400 with `-32020` (`HeaderMismatch`) when
+
+- the argument is present and its header is missing,
+- the header differs from the argument (strings exactly, integers numerically, so `42.0` equals `42`; booleans as `true`/`false`),
+- the header holds characters outside printable ASCII without the `=?base64?...?=` form, or invalid base64.
+
+An absent or `null` argument needs no header. `Mcp-Param-*` headers the schema does not mention are ignored. Header names are case-insensitive, values are not.
+
+The specification's limits are checked when the tool is registered, and a violation stops the application at startup (or fails `McpRegistrations`) with the tool name: the name must be a non-empty HTTP token and unique ignoring case, the property must be a `string`, `integer` or `boolean` (not `number`), and it must be reachable from the root through `properties` alone, so not under `items`, `oneOf`/`anyOf`/`allOf`, `if`/`then`/`else` or `$ref`. A repeated header reaches the server as one comma-joined value from most containers and fails the comparison.
+
+## Trace context
+
+A client can put OpenTelemetry trace context into the `_meta` of a request: `traceparent`, `tracestate` and `baggage`. These three keys are the one exception to the `prefix/name` rule for `_meta` keys. `call.trace()` on `ToolCall`, `PromptCall`, `ResourceCall` and `CompletionCall` returns a `TraceContext` (never null; `TraceContext.EMPTY` when the client sent none):
+
+```java
+@Override
+public ToolResult call(ToolCall call) {
+    TraceContext trace = call.trace();
+    Span span = tracer.spanBuilder("report").setParent(propagator.extract(trace.toJson())).startSpan();   // your tracer
+    ...
+}
+```
+
+`traceId()`, `parentSpanId()` and `sampled()` read the parts of a valid `traceparent`. To forward the context on a request your handler makes itself, merge `call.trace().child().toJson()` into that request's `_meta`; `child()` keeps the trace id, flags, `tracestate` and `baggage` and picks a new span id (use your tracer's span id if you have one).
+
+The library has no OpenTelemetry dependency and starts no spans. A value that does not follow the W3C format is dropped instead of failing the request (a `tracestate` also goes if the `traceparent` is missing or invalid). `tracestate` and `baggage` are only checked for printable ASCII, which is lenient on purpose. Outgoing notifications (progress, `list_changed`) carry no trace context: the specification asks for none, and a notification has no single request it belongs to.
+
+Status: unit-tested (`TraceContextTest`, 7 tests, including a request through the handler). Not run against a real tracer. The key names and the format rule come from the 2026-07-28 specification (`basic`, "OpenTelemetry trace context"); the W3C `traceparent` rules are from my knowledge of that standard, not re-read.
+
+## Extensions
+
+MCP extensions are negotiated in capabilities: the server lists them in `server/discover` under `capabilities.extensions`, the client declares the ones it supports in the `clientCapabilities` of every request. Both are off unless you opt in.
+
+**Announce** an extension by implementing `McpExtension` in a CDI bean:
+
+```java
+@ApplicationScoped
+public class ReportsExtension implements McpExtension {
+    public String id() { return "com.example/reports"; }          // vendor-prefix/extension-name
+    public JsonObject settings() { return Json.createObjectBuilder().add("maxRows", 1000).build(); }
+}
+```
+
+The id is checked at startup (`vendor-prefix/name`; duplicates and a `null` settings object are refused). Announcing is a promise that your server implements the extension: the library adds no behaviour of its own.
+
+**Read the client's side** from the call object in a tool, resource or prompt:
+
+```java
+Optional<JsonObject> ui = call.clientExtension("io.modelcontextprotocol/ui");   // empty: fall back to plain content
+call.requireClientExtension("com.example/reports");                              // mandatory: refuses with -32021
+```
+
+`requireClientExtension` answers HTTP 400 with error `-32021` (missing required client capability) and names the extension in `data.requiredCapabilities.extensions`. The specification page on extensions says only that a server "can reject" a request when a mandatory extension is missing and does not name an error code. I chose -32021 because it is the code the specification gives for a missing client capability. [Likely] correct, but not stated for extensions.
+
+Status: unit-tested (`McpExtensionsTest`, 8 tests); `ExtensionsIT` (5 tests, fixture WAR) passes on Payara, WildFly and Open Liberty.
+
+## MCP Apps
+
+MCP Apps (extension `io.modelcontextprotocol/ui`) let a tool name an HTML page that a supporting client shows in a sandboxed frame instead of, or next to, the text result. `Apps` has the helpers, and `mcp-example-apps` is a complete small example (`show_clock`).
+
+1. **Announce the extension:** `mcp.apps.enabled=true`, or a bean extending `McpAppsExtension` (as the example does).
+2. **Bind the tool to a page:** `meta()` of the tool returns `Apps.toolMeta("ui://clock/app.html")`, optionally with visibility (`"model"`, `"app"`; both by default). With the annotation: `@McpTool(meta = "{\"ui\":{\"resourceUri\":\"ui://clock/app.html\"}}")`.
+3. **Serve the page** as a resource whose URI starts with `ui://`: `Apps.html(uri, html, Apps.resourceMeta()...build())` gives content with the required MIME type `text/html;profile=mcp-app`. The resource meta declares what the page may contact (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`), browser features it asks for (`permission("camera")` ...), `domain` and `prefersBorder`. Declare nothing and clients apply their strictest policy.
+4. **Keep the text fallback:** the tool must still return useful `content`. `call.clientSupportsApps()` tells you whether the client declared the extension and the MIME type, so you can adapt the text.
+
+The library checks the wiring at startup (and when a tool is added at runtime): the tool's `ui` binding must be a `ui://` URI of a resource this server has (fixed or template), `visibility` must hold `model` and/or `app`, and every origin in `csp` must be a plain origin (`https://host[:port]`, `wss://...`, `https://*.example.com`, `data:`, `blob:`). The last check matters because clients build a Content-Security-Policy from those strings: an entry such as `https://a.com; script-src *` is refused instead of being passed on.
+
+### The page's side
+
+The page talks to the host over `postMessage` with JSON-RPC 2.0 (the page is the client, the host the server). This library does not touch that traffic; the example page (`clock.html`, one self-contained file) shows the whole exchange:
+
+1. The page sends `ui/initialize` (`protocolVersion`, `clientInfo`, `appCapabilities`), applies the `hostContext` of the reply (theme, CSS variables) and then sends `ui/notifications/initialized`. The host sends nothing before that.
+2. The host sends `ui/notifications/tool-result` with the `CallToolResult` of the tool call that opened the page. This is why `show_clock` returns `structuredContent` (`{"now": ...}`) next to its text: the page reads the structured part and falls back to the text.
+3. The **Refresh** button sends `tools/call` for `refresh_clock` through the host. That tool is app-only (`Apps.toolMeta(uri, "app")`), so models do not see it, and a host must refuse page calls to tools that lack `app` visibility.
+4. The page also handles `ui/notifications/tool-cancelled`, `ui/notifications/host-context-changed` and `ui/resource-teardown` (answered with `{}`), reports its size with `ui/notifications/size-changed`, ignores messages whose source is not `window.parent`, and writes received values with `textContent` only.
+
+Status: unit-tested (`McpAppsTest`, 10 tests). `ExtensionsIT` passes on all three servers. The page's message flow is checked against a scripted fake host in Node (initialize, result, refresh, errors, teardown, a foreign sender, hostile text). `AppsIT` (5 tests, against `mcp-example-apps`) passes on all three servers (it first found a real bug on Payara: the extension was registered twice, fixed with `@Vetoed`). No real Apps-capable host has displayed the example, so what a host's sandbox allows is unverified. The protocol facts (version string `2026-01-26`, method names) come from a documentation mirror of the Apps specification, not from the specification repository. [Likely] the default sandbox policy allows the inline script and style of a single-file page; if a host blocks them, the page needs `resourceDomains` or the host's rules need checking. The spec says the flat key `_meta["ui/resourceUri"]` is deprecated and this library does not emit it.
+
 ## Dynamic registration
 
 Tools and prompts found at startup stay in the registry, but an application can also add, replace and remove them while it runs. Inject `McpRegistrations`:
@@ -512,11 +660,11 @@ docker run --rm -p 8080:8080 -v "$PWD/mcp-example-conformance/target/mcp-conform
 npx --yes @modelcontextprotocol/conformance@alpha server --url http://localhost:8080/mcp --requirements 2026-07-28 -o results > all.txt 2>&1
 ```
 
-Scenarios for features this server does not implement are expected to fail: the `tasks-*` scenarios (Tasks extension, not scored) and the pending `x-mcp-header` scenarios. They are listed in `mcp-example-conformance/expected-failures.yml`; pass that file with `--expected-failures` and the run exits 0 as long as nothing else fails. The CI job `conformance` does exactly that and fails on any other failure, and also when a listed scenario starts to pass (then delete its entry). It uploads the results as an artifact.
+Scenarios for features this server does not implement are expected to fail: the `tasks-*` scenarios (Tasks extension, not scored) and the `x-mcp-header` scenario `http-custom-header-server-validation` until it has been confirmed to pass (see below). They are listed in `mcp-example-conformance/expected-failures.yml`; pass that file with `--expected-failures` and the run exits 0 as long as nothing else fails. The CI job `conformance` does exactly that and fails on any other failure, and also when a listed scenario starts to pass (then delete its entry). It uploads the results as an artifact.
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); keep-alive comments on a streamed `tools/call` (only listen streams have them); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; `unevaluatedProperties`/`unevaluatedItems`, `format` assertions and remote `$ref` in argument validation (see Argument validation); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `unevaluatedProperties`/`unevaluatedItems`, `format` assertions and remote `$ref` in argument validation (see Argument validation); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
 
 ## Decisions worth a second look
 

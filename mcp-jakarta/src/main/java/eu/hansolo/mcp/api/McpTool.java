@@ -52,6 +52,12 @@ public @interface McpTool {
     /** OAuth scopes the caller's token must carry (see {@code McpToolHandler#requiredScopes}). Requires {@code mcp.auth.enabled=true}. */
     String[] scopes() default {};
 
+    /** Icon URLs ({@code https}, {@code http} or {@code data:}). Implement the handler interface for icons with a MIME type, sizes or a theme. */
+    String[] icons() default {};
+
+    /** The {@code _meta} object as JSON text, for example {@code "{\"com.example/team\":\"billing\"}"}. Empty means none. */
+    String meta() default "";
+
     /** Spec annotation {@code readOnlyHint}: the tool does not modify its environment. Untrusted hint for clients. */
     Hint readOnlyHint() default Hint.UNSET;
 

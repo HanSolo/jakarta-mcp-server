@@ -15,6 +15,7 @@ import jakarta.json.JsonValue;
 import eu.hansolo.mcp.api.Caller;
 import eu.hansolo.mcp.api.CompletionCall;
 import eu.hansolo.mcp.api.CompletionResult;
+import eu.hansolo.mcp.api.Icon;
 import eu.hansolo.mcp.api.McpCompletionHandler;
 import eu.hansolo.mcp.api.McpPromptHandler;
 import eu.hansolo.mcp.api.McpResourceHandler;
@@ -35,6 +36,7 @@ import eu.hansolo.mcp.auth.McpAuthenticator;
 import eu.hansolo.mcp.auth.TokenException;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
+import eu.hansolo.mcp.api.TraceContext;
 import eu.hansolo.mcp.protocol.ErrorCodes;
 import eu.hansolo.mcp.protocol.JsonRpc;
 import eu.hansolo.mcp.protocol.McpProtocolException;
@@ -79,15 +81,22 @@ public class McpRequestHandler {
     private final AuthConfig       authConfig;
     private final McpAuthenticator authenticator;
     private final McpNotifications notifications;
+    private final McpExtensions    extensions;
 
 
     @Inject
-    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications) {
+    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications, McpExtensions extensions) {
         this.registry      = registry;
         this.config        = config;
         this.authConfig    = authConfig;
         this.authenticator = authenticator;
         this.notifications = notifications;
+        this.extensions    = extensions;
+    }
+
+    /** A handler that announces no extensions. */
+    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications) {
+        this(registry, config, authConfig, authenticator, notifications, McpExtensions.none());
     }
 
     /** A handler with its own notification hub (nothing outside it can publish to the streams). */
@@ -278,7 +287,7 @@ public class McpRequestHandler {
             checkNameHeader(headers.apply("Mcp-Name"), params, nameField);
         }
         JsonObject clientInfo = meta.get(MetaKeys.CLIENT_INFO) instanceof JsonObject info ? info : null;
-        return new RequestContext(method, params, capabilities, clientInfo, caller);
+        return new RequestContext(method, params, capabilities, clientInfo, caller, TraceContext.from(meta), headers);
     }
 
     private static void checkNameHeader(String header, JsonObject params, String field) {
@@ -311,6 +320,9 @@ public class McpRequestHandler {
         if (registry.hasCompletions()) {
             capabilities.add("completions", Json.createObjectBuilder());
         }
+        if (!extensions.isEmpty()) {
+            capabilities.add("extensions", extensions.toJson());
+        }
         result.add("capabilities", capabilities);
         if (config.instructions() != null) {
             result.add("instructions", config.instructions());
@@ -336,6 +348,7 @@ public class McpRequestHandler {
             if (tool.annotations() != null) {
                 entry.add("annotations", tool.annotations());
             }
+            addDescriptors(entry, tool.icons(), tool.meta());
             tools.add(entry);
         }
         return listResult("tools", tools, page.nextCursor());
@@ -358,6 +371,7 @@ public class McpRequestHandler {
                 }
                 entry.add("arguments", arguments);
             }
+            addDescriptors(entry, prompt.icons(), prompt.meta());
             prompts.add(entry);
         }
         return listResult("prompts", prompts, page.nextCursor());
@@ -394,7 +408,7 @@ public class McpRequestHandler {
         String requestState = optionalString(params.get("requestState"), "params.requestState");
         PromptResult outcome;
         try {
-            outcome = prompt.get(new PromptCall(name, arguments, context.clientCapabilities(), context.clientInfo(), inputResponses, requestState, context.caller()));
+            outcome = prompt.get(new PromptCall(name, arguments, context.clientCapabilities(), context.clientInfo(), inputResponses, requestState, context.caller(), context.trace()));
         } catch (McpProtocolException e) {
             throw e;
         } catch (Exception e) {
@@ -435,6 +449,7 @@ public class McpRequestHandler {
             if (resource.annotations() != null) {
                 entry.add("annotations", resource.annotations());
             }
+            addDescriptors(entry, resource.icons(), resource.meta());
             resources.add(entry);
         }
         return listResult("resources", resources, page.nextCursor());
@@ -451,6 +466,7 @@ public class McpRequestHandler {
             if (template.annotations() != null) {
                 entry.add("annotations", template.annotations());
             }
+            addDescriptors(entry, template.icons(), template.meta());
             templates.add(entry);
         }
         return listResult("resourceTemplates", templates, page.nextCursor());
@@ -502,7 +518,7 @@ public class McpRequestHandler {
                 throw new AuthChallengeException("Insufficient scope for completions of " + abbreviate(target), String.join(" ", handler.requiredScopes()));
             }
             try {
-                outcome = handler.complete(new CompletionCall(kind, target, argumentName.getString(), argumentValue.getString(), others, context.clientCapabilities(), context.clientInfo(), context.caller()));
+                outcome = handler.complete(new CompletionCall(kind, target, argumentName.getString(), argumentValue.getString(), others, context.clientCapabilities(), context.clientInfo(), context.caller(), context.trace()));
             } catch (McpProtocolException e) {
                 throw e;
             } catch (Exception e) {
@@ -540,7 +556,7 @@ public class McpRequestHandler {
         String requestState = optionalString(params.get("requestState"), "params.requestState");
         ResourceResult outcome;
         try {
-            outcome = resolved.read(new ResourceCall(uri, resolved.variables(), context.clientCapabilities(), context.clientInfo(), inputResponses, requestState, context.caller()));
+            outcome = resolved.read(new ResourceCall(uri, resolved.variables(), context.clientCapabilities(), context.clientInfo(), inputResponses, requestState, context.caller(), context.trace()));
         } catch (McpProtocolException e) {
             throw e;
         } catch (Exception e) {
@@ -557,14 +573,7 @@ public class McpRequestHandler {
                 result.add("resultType", "complete");
                 JsonArrayBuilder contents = Json.createArrayBuilder();
                 for (ResourceContent content : complete.contents()) {
-                    JsonObjectBuilder entry = Json.createObjectBuilder().add("uri", content.uri());
-                    addIfPresent(entry, "mimeType", content.mimeType());
-                    if (content.text() != null) {
-                        entry.add("text", content.text());
-                    } else {
-                        entry.add("blob", content.blob());
-                    }
-                    contents.add(entry);
+                    contents.add(content.toJson());
                 }
                 result.add("contents", contents);
                 result.add("ttlMs", complete.ttlMs() != null ? complete.ttlMs() : 0L);
@@ -774,6 +783,7 @@ public class McpRequestHandler {
         if (!Scopes.satisfiesAll(context.caller().scopes(), tool.requiredScopes())) {
             throw new AuthChallengeException("Insufficient scope for tool " + abbreviate(name), String.join(" ", tool.requiredScopes()));
         }
+        ParamHeaders.check(declaredHeaders(name, tool), arguments, context.headers());
         var problem = SchemaValidator.validate(tool.inputSchema(), arguments);
         if (problem.isPresent()) {
             throw McpProtocolException.invalidArguments("Invalid arguments for tool " + name + ": " + problem.get());
@@ -783,11 +793,20 @@ public class McpRequestHandler {
         return new PreparedTool(name, tool, arguments, inputResponses, requestState, context);
     }
 
+    private static List<ParamHeaders.Param> declaredHeaders(String name, McpToolHandler tool) {
+        try {
+            return ParamHeaders.declared(tool.inputSchema());
+        } catch (IllegalArgumentException e) {
+            LOG.log(Level.WARNING, "Tool '" + name + "' has an invalid x-mcp-header: " + e.getMessage());
+            throw McpProtocolException.invalidArguments("Tool " + name + " is misconfigured");
+        }
+    }
+
     private JsonObject invokeTool(PreparedTool prepared, ProgressReporter progress) {
         RequestContext context = prepared.context();
         ToolResult outcome;
         try {
-            outcome = prepared.tool().call(new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress));
+            outcome = prepared.tool().call(new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress, context.trace()));
         } catch (McpProtocolException | RequestCancelledException e) {
             throw e;
         } catch (Exception e) {
@@ -818,22 +837,54 @@ public class McpRequestHandler {
      * can no longer change the HTTP status). If the client has closed the stream the request is cancelled and nothing more is sent.
      */
     private void streamTool(JsonValue id, PreparedTool prepared, JsonValue token, McpHttpResponse.EventSink sink) throws IOException {
-        SseProgress progress = new SseProgress(sink, token);
-        String last;
+        GuardedSink guarded   = new GuardedSink(sink);
+        SseProgress progress  = new SseProgress(guarded, token);
+        Thread      keepAlive = startKeepAlive(guarded, progress);
         try {
-            last = JsonRpc.result(id, withServerInfo(invokeTool(prepared, progress))).toString();
-        } catch (RequestCancelledException e) {
-            LOG.fine("Request cancelled: the client closed the stream");
-            return;
-        } catch (McpProtocolException e) {
-            last = JsonRpc.error(id, e.code(), e.getMessage(), e.data()).toString();
-        } catch (RuntimeException e) {
-            LOG.log(Level.SEVERE, "Unexpected failure while streaming an MCP response", e);
-            last = JsonRpc.error(id, ErrorCodes.INTERNAL_ERROR, "Internal error", null).toString();
+            String last;
+            try {
+                last = JsonRpc.result(id, withServerInfo(invokeTool(prepared, progress))).toString();
+            } catch (RequestCancelledException e) {
+                LOG.fine("Request cancelled: the client closed the stream");
+                return;
+            } catch (McpProtocolException e) {
+                last = JsonRpc.error(id, e.code(), e.getMessage(), e.data()).toString();
+            } catch (RuntimeException e) {
+                LOG.log(Level.SEVERE, "Unexpected failure while streaming an MCP response", e);
+                last = JsonRpc.error(id, ErrorCodes.INTERNAL_ERROR, "Internal error", null).toString();
+            }
+            if (!progress.isCancelled()) {
+                guarded.send(last);
+            }
+        } finally {
+            keepAlive.interrupt();
+            guarded.close();
         }
-        if (!progress.isCancelled()) {
-            sink.send(last);
-        }
+    }
+
+    /**
+     * While a streamed call runs, writes a comment line whenever the stream has been quiet for {@code keepAliveMs}. This keeps proxies
+     * from cutting a long call that reports no progress, and it finds a client that has gone: the failed write cancels the call
+     * ({@link ToolCall#isCancelled()}, and the next progress report throws).
+     */
+    private Thread startKeepAlive(GuardedSink sink, SseProgress progress) {
+        long interval = config.keepAliveMs();
+        return Thread.ofVirtual().name("mcp-call-keepalive").start(() -> {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    long wait = interval - sink.idleMillis();
+                    if (wait > 0) {
+                        Thread.sleep(wait);
+                    } else {
+                        sink.comment("keep-alive");
+                    }
+                }
+            } catch (InterruptedException e) {
+                // the tool is done
+            } catch (IOException e) {
+                progress.cancel();
+            }
+        });
     }
 
     private static JsonObject toResult(ToolResult outcome) {
@@ -845,6 +896,9 @@ public class McpRequestHandler {
                     result.add("structuredContent", complete.structuredContent());
                 }
                 result.add("isError", complete.isError());
+                if (complete.meta() != null) {
+                    result.add("_meta", complete.meta());
+                }
             }
             case ToolResult.InputRequired input -> {
                 result.add("resultType", "input_required");
@@ -859,10 +913,21 @@ public class McpRequestHandler {
         return result.build();
     }
 
+    /** Adds the server's identity to the result's {@code _meta}, keeping what the handler put there (the server's key wins on a clash). */
     private JsonObject withServerInfo(JsonObject result) {
         JsonObject info = Json.createObjectBuilder().add("name", config.serverName()).add("version", config.serverVersion()).build();
-        JsonObject meta = Json.createObjectBuilder().add(MetaKeys.SERVER_INFO, info).build();
-        return Json.createObjectBuilder(result).add("_meta", meta).build();
+        JsonObjectBuilder meta = result.get("_meta") instanceof JsonObject existing ? Json.createObjectBuilder(existing) : Json.createObjectBuilder();
+        return Json.createObjectBuilder(result).add("_meta", meta.add(MetaKeys.SERVER_INFO, info)).build();
+    }
+
+    /** The optional {@code icons} and {@code _meta} fields of a listed tool, prompt, resource or template. */
+    private static void addDescriptors(JsonObjectBuilder entry, List<Icon> icons, JsonObject meta) {
+        if (!icons.isEmpty()) {
+            entry.add("icons", Icon.toJson(icons));
+        }
+        if (meta != null) {
+            entry.add("_meta", meta);
+        }
     }
 
     /** An optional object field: null when absent or JSON null, a malformed-params error for any other type. */
@@ -907,6 +972,6 @@ public class McpRequestHandler {
     private record PreparedTool(String name, McpToolHandler tool, JsonObject arguments, JsonObject inputResponses, String requestState, RequestContext context) {
     }
 
-    private record RequestContext(String method, JsonObject params, JsonObject clientCapabilities, JsonObject clientInfo, Caller caller) {
+    private record RequestContext(String method, JsonObject params, JsonObject clientCapabilities, JsonObject clientInfo, Caller caller, TraceContext trace, Function<String, String> headers) {
     }
 }

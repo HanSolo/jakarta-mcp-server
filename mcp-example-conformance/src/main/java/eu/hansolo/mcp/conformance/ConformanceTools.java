@@ -31,6 +31,20 @@ public final class ConformanceTools {
     }
 
 
+    private static JsonObject customHeaders() {
+        return Json.createReader(new java.io.StringReader("""
+                {
+                  "type": "object",
+                  "properties": {
+                    "region": {"type": "string", "x-mcp-header": "Region"},
+                    "priority": {"type": "integer", "x-mcp-header": "Priority"},
+                    "flag": {"type": "boolean", "x-mcp-header": "Flag"},
+                    "note": {"type": "string"}
+                  }
+                }
+                """)).readObject();
+    }
+
     /** All tools by name, in registration order. */
     public Map<String, McpToolHandler> all() {
         List<FixtureTool> tools = new ArrayList<>();
@@ -55,6 +69,7 @@ public final class ConformanceTools {
             notifications.promptsListChanged();
             return ToolResult.text("Mutation triggered");
         }));
+        tools.add(new FixtureTool("test_custom_header", "Declares x-mcp-header parameters (the name is a guess: another SDK passes the scenario with it).", customHeaders(), c -> ToolResult.text("Custom header call accepted")));
         tools.add(new FixtureTool("json_schema_2020_12_tool", "Declares a JSON Schema 2020-12 input schema.", jsonSchema(), c -> ToolResult.text("Valid input for " + c.stringArgument("name").orElse("nobody"))));
 
         tools.add(new FixtureTool("test_input_required_result_elicitation", "Asks the client for the user's name.", this::elicitation));

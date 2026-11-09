@@ -147,6 +147,8 @@ final class McpClient {
         private final InputStream    stream;
         private final BufferedReader reader;
         private final long           startedNanos;
+        private int                  comments;
+        private long                 firstCommentMs = -1;
 
 
         private Events(int status, String contentType, InputStream stream, long startedNanos) {
@@ -162,6 +164,16 @@ final class McpClient {
             return status;
         }
 
+        /** How many SSE comment lines (keep-alives) have been read so far. */
+        int comments() {
+            return comments;
+        }
+
+        /** When the first comment line arrived, in milliseconds after the request was sent; -1 if none has. */
+        long firstCommentMs() {
+            return firstCommentMs;
+        }
+
         String contentType() {
             return contentType;
         }
@@ -174,6 +186,11 @@ final class McpClient {
                 if (line.isEmpty()) {
                     if (data.length() > 0) {
                         return new Event(Json.createReader(new StringReader(data.toString())).readObject(), (System.nanoTime() - startedNanos) / 1_000_000);
+                    }
+                } else if (line.startsWith(":")) {
+                    comments++;
+                    if (firstCommentMs < 0) {
+                        firstCommentMs = (System.nanoTime() - startedNanos) / 1_000_000;
                     }
                 } else if (line.startsWith("data:")) {
                     data.append(line.substring(5).stripLeading());
