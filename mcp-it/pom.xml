@@ -5,7 +5,7 @@
     <parent>
         <groupId>eu.hansolo.mcp</groupId>
         <artifactId>jakarta-mcp-server</artifactId>
-        <version>0.4.0</version>
+        <version>0.5.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>mcp-it</artifactId>
@@ -31,6 +31,19 @@
         <dependency>
             <groupId>eu.hansolo.mcp</groupId>
             <artifactId>mcp-example-tickets</artifactId>
+            <version>${project.version}</version>
+            <type>war</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>eu.hansolo.mcp</groupId>
+            <artifactId>mcp-it-fixture</artifactId>
             <version>${project.version}</version>
             <type>war</type>
             <scope>test</scope>
@@ -79,6 +92,7 @@
                     <systemPropertyVariables>
                         <mcp.war>${project.basedir}/../mcp-example/target/mcp-example.war</mcp.war>
                         <mcp.tickets.war>${project.basedir}/../mcp-example-tickets/target/mcp-example-tickets.war</mcp.tickets.war>
+                        <mcp.fixture.war>${project.basedir}/../mcp-it-fixture/target/mcp-it-fixture.war</mcp.fixture.war>
                         <mcp.server>${mcp.server}</mcp.server>
                         <mcp.image>${mcp.image}</mcp.image>
                         <mcp.realm>${project.basedir}/../keycloak/mcp-realm.json</mcp.realm>

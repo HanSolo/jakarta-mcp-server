@@ -25,9 +25,11 @@ import eu.hansolo.mcp.auth.AuthConfig;
  * <p>Tools and prompts found at startup (annotations, CDI beans) can be replaced or removed here too. Resources, templates and
  * completions are fixed at startup.
  *
- * <p><b>This is per server instance</b>, like {@link McpNotifications}: with several instances, make the same call on each of them
- * (a message topic, a database notification, ...). Clients that cached a list ({@code ttlMs}) see the change at the latest when the
- * cache expires, or at once if they listen.
+ * <p><b>This is per server instance</b>: the registry of this instance changes, and only the clients listening here are told. With
+ * several instances, make the same call on each of them (at startup of the instance, or from a message topic or a database
+ * notification). A {@link McpNotificationBridge} does not carry registrations, on purpose: it would tell the other clients about a
+ * change their instance does not have yet. Clients that cached a list ({@code ttlMs}) see the change at the latest when the cache
+ * expires, or at once if they listen.
  */
 @Singleton
 public class McpRegistrations {
@@ -53,21 +55,21 @@ public class McpRegistrations {
     public void addTool(McpToolHandler tool) {
         checkScopes("Tool '" + tool.name() + "'", tool.requiredScopes());
         registry.addTool(tool, false);
-        notifications.toolsListChanged();
+        notifications.toolsListChangedLocally();
     }
 
     /** Adds the tool, or replaces the one with the same name (a new description or schema, for example). */
     public void replaceTool(McpToolHandler tool) {
         checkScopes("Tool '" + tool.name() + "'", tool.requiredScopes());
         registry.addTool(tool, true);
-        notifications.toolsListChanged();
+        notifications.toolsListChangedLocally();
     }
 
     /** @return true if there was such a tool; clients are only told if there was */
     public boolean removeTool(String name) {
         boolean removed = registry.removeTool(name);
         if (removed) {
-            notifications.toolsListChanged();
+            notifications.toolsListChangedLocally();
         }
         return removed;
     }
@@ -80,21 +82,21 @@ public class McpRegistrations {
     public void addPrompt(McpPromptHandler prompt) {
         checkScopes("Prompt '" + prompt.name() + "'", prompt.requiredScopes());
         registry.addPrompt(prompt, false);
-        notifications.promptsListChanged();
+        notifications.promptsListChangedLocally();
     }
 
     /** Adds the prompt, or replaces the one with the same name. */
     public void replacePrompt(McpPromptHandler prompt) {
         checkScopes("Prompt '" + prompt.name() + "'", prompt.requiredScopes());
         registry.addPrompt(prompt, true);
-        notifications.promptsListChanged();
+        notifications.promptsListChangedLocally();
     }
 
     /** @return true if there was such a prompt; clients are only told if there was */
     public boolean removePrompt(String name) {
         boolean removed = registry.removePrompt(name);
         if (removed) {
-            notifications.promptsListChanged();
+            notifications.promptsListChangedLocally();
         }
         return removed;
     }

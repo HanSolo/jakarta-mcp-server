@@ -112,6 +112,16 @@ final class McpClient {
         return send(request.build());
     }
 
+    /** Any request to a path of this server (the fixture's admin endpoint, say), with a plain-text body or none. */
+    Reply request(String method, String path, String body) throws IOException, InterruptedException {
+        HttpRequest.BodyPublisher publisher = body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body);
+        HttpRequest.Builder       request   = HttpRequest.newBuilder(URI.create(baseUrl + path)).timeout(Duration.ofSeconds(15)).method(method, publisher);
+        if (body != null) {
+            request.header("Content-Type", "text/plain");
+        }
+        return send(request.build());
+    }
+
     Reply delete(Map<String, String> headers) throws IOException, InterruptedException {
         HttpRequest.Builder request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(15)).DELETE();
         headers.forEach(request::header);

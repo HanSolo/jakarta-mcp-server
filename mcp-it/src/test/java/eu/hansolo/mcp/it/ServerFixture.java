@@ -107,6 +107,11 @@ final class ServerFixture {
         return container;
     }
 
+    /** The test-only fixture WAR (admin endpoint, HTTP bridge, tool with a nested schema). */
+    static Path fixtureWar() {
+        return Path.of(System.getProperty("mcp.fixture.war", "../mcp-it-fixture/target/mcp-it-fixture.war"));
+    }
+
     /** Polls the endpoint until the application answers (200, or 401 when authentication is on), because the port opens before deployment finishes. */
     static void awaitDeployed(GenericContainer<?> container, McpClient client) {
         Instant deadline = Instant.now().plus(Duration.ofSeconds(180));

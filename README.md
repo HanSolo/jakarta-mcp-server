@@ -10,12 +10,13 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 
 - **What has been run:** `mvn verify` of the original server (discover, tools/list, tools/call, MRTR) passed on the author's machine, and the server was exercised with MCP Inspector (`--protocol-era modern`) and curl against Payara Micro.
 - **Verified on the author's machine (macOS, Docker Desktop 29, Payara Micro 7.2026.10 Build 18 via `payara/micro:latest`, Keycloak 26.4):** `mvn clean verify` passed with 145 unit tests and 46 integration tests (30 in `McpServerIT` at the time, 34 now with the completion tests, 9 in `McpAuthServerIT` with a test issuer, 7 in `McpKeycloakIT` with a real Keycloak). That covers CDI scanning of `@McpTool` / `@McpResource` / `@McpPrompt` beans, the well-known metadata endpoint, 401/403 challenges, audience binding, MRTR and the `eu.hansolo.mcp` rename.
-- **Also passed on WildFly 42.0.0.Final and Open Liberty** (`-Dmcp.server=wildfly` / `liberty`; reported by the user, logs not shared with the author).
+- **Integration run of 2026-11-09 (`scripts/it.sh`; the author has seen the logs):** 97 integration tests passed on Payara (`payara/micro:latest`) and on WildFly (`quay.io/wildfly/wildfly:latest-jdk21`), and 87 on Open Liberty (`full-java21-openj9-ubi-minimal`; the tickets test is skipped there by design). Per class: `McpServerIT` 41, `McpAsyncListenIT` 3, `McpAuthServerIT` 9, `McpKeycloakIT` 7, `McpTicketsKeycloakIT` 10, `DynamicRegistrationIT` 5, `ArgumentValidationIT` 11, `IntrospectionIT` 6, `NotificationBridgeIT` 5. Setup: macOS, Docker Desktop 29.9.2, JDK 25 compiling to release 21, Keycloak 26.4, Testcontainers 2.0.1. The tested tree was v0.4.0 plus the unreleased notification bridge, the script and the new tests (`v0.4.0-dirty`), not the bare tag.
 - **Tickets example:** `mvn clean verify` passes on Payara with Keycloak (178 unit tests at that time, 8 tickets integration tests). Passes on WildFly (reported by the user). **Open Liberty:** the tickets example does not start there without a data source: Liberty creates a container-managed `EntityManagerFactory` for `@PersistenceUnit` and looks for `java:comp/DefaultDataSource` instead of using the `jakarta.persistence.jdbc.*` properties of the example's resource-local unit. The tickets integration test is therefore skipped on Liberty. A `<dataSource id="DefaultDataSource">` in `server.xml` with the H2 jar on the server should fix it (untested).
-- **Streaming (progress notifications over SSE):** passes on Payara (`mvn clean verify`, 4 streaming integration tests, including one that proves events arrive while the tool is still running and one that resets the connection and checks that the tool is told). The first version, a JAX-RS `StreamingOutput`, was buffered by Jersey; the servlet-based version fixed that. Not yet run on WildFly or Open Liberty.
-- **Notifications (`subscriptions/listen`, list-changed, resource updates):** passes on Payara (13 unit tests, 3 integration tests in `McpServerIT`, 2 in `McpTicketsKeycloakIT`). Not yet run on WildFly or Open Liberty.
-- **Async listen mode (`mcp.listen.async=true`, virtual threads):** passes on Payara (`mvn clean verify`: 196 library unit tests and 70 integration tests, including `McpAsyncListenIT`: the acknowledgement and notification, 60 open streams while ordinary requests are still answered, and a stream that lives past 40 seconds). Every request now goes through a suspended JAX-RS response, which the whole suite exercised. Not yet run on WildFly or Open Liberty.
-- **Not yet run:** the Docker Compose setup, the CI workflow and the `release` profile. After renaming packages or moving files, always build with `mvn clean verify`: stale classes in `target/` end up in the WAR and the deployment fails with a `ClassNotFoundException`.
+- **Streaming (progress notifications over SSE):** passes on Payara (`mvn clean verify`, 4 streaming integration tests, including one that proves events arrive while the tool is still running and one that resets the connection and checks that the tool is told). The first version, a JAX-RS `StreamingOutput`, was buffered by Jersey; the servlet-based version fixed that. WildFly and Open Liberty: passed in the run of 2026-11-09 (see above).
+- **Notifications (`subscriptions/listen`, list-changed, resource updates):** passes on Payara (13 unit tests, 3 integration tests in `McpServerIT`, 2 in `McpTicketsKeycloakIT`). WildFly and Open Liberty: passed in the run of 2026-11-09 (see above).
+- **Async listen mode (`mcp.listen.async=true`, virtual threads):** passes on Payara (`mvn clean verify`: 196 library unit tests and 70 integration tests, including `McpAsyncListenIT`: the acknowledgement and notification, 60 open streams while ordinary requests are still answered, and a stream that lives past 40 seconds). Every request now goes through a suspended JAX-RS response, which the whole suite exercised. Passed on WildFly and Open Liberty in the run of 2026-11-09 (`McpAsyncListenIT`, 3 tests); see also the async section below.
+- **Since 0.4.0 (argument validation, opaque tokens, dynamic registration, the notification bridge):** covered by unit tests, by the MCP conformance suite against Payara Micro in CI, and by the integration tests of the run above on all three servers: `ArgumentValidationIT`, `DynamicRegistrationIT`, `IntrospectionIT` (against Keycloak 26.4) and `NotificationBridgeIT` (two containers). They use the test-only `mcp-it-fixture` WAR. One gap: the audience test in `IntrospectionIT` asserts only the 401, not why Keycloak or the server refused the token.
+- **Not yet run:** the Docker Compose setup. After renaming packages or moving files, always build with `mvn clean verify`: stale classes in `target/` end up in the WAR and the deployment fails with a `ClassNotFoundException`.
 - **Unverified:** behaviour with a real identity provider (see the Keycloak item above; any other provider is untested). `latest` is a moving tag: pin the image with `-Dmcp.image=payara/micro:<tag>` once you have checked the tag name on Docker Hub.
 - **2026-07-28 clients only.** Clients that still require the `initialize` handshake (2025-11-25 and earlier) get HTTP 400 naming the supported version.
 - **Authentication is off by default** (see below). With it off, anyone who can reach the endpoint can call every tool, and the server logs a warning at startup.
@@ -28,6 +29,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 | `mcp-example` | WAR deployed at the context root: annotated tools (`echo`, `add`, `repeat`), a handler-style tool (`greet`, multi round-trip), a resource (`config://server/info`), a template (`greeting://{name}`) and a prompt (`summarize`) |
 | `mcp-example-tickets` | A realistic example: a support-ticket service with a database, scopes and a confirmation step (see [The tickets example](#the-tickets-example)). Needs authentication |
 | `mcp-example-conformance` | A fixture WAR with the tools, prompts and resources the official conformance suite expects (see [Conformance suite](#conformance-suite)). A test aid, not an example to copy |
+| `mcp-it-fixture` | A test-only WAR: an **unauthenticated** admin endpoint (add and remove tools, announce changes, receive a change), a bridge that POSTs changes to peer instances, and a tool with a nested `oneOf` schema. Used by the integration tests; never deploy it |
 | `mcp-it` | Integration tests: starts the example WAR in a Payara Micro, WildFly or Open Liberty container with Testcontainers |
 
 ## Supported servers
@@ -36,7 +38,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 | --- | --- | --- |
 | Payara 7 (Micro) | **Verified** by the author (7.2026.10 Build 18) | `-Dmcp.server=payara` (default), image `payara/micro:latest` |
 | WildFly | **Verified** on `quay.io/wildfly/wildfly:latest-jdk21` (WildFly 42.0.0.Final, RESTEasy 7.0.5). The first attempt failed with `UnsupportedClassVersionError` because the WAR was compiled for Java 25; the default is now Java 21 bytecode and the suite passes | `-Dmcp.server=wildfly`, image `quay.io/wildfly/wildfly:latest-jdk21` |
-| Open Liberty | **Verified** (user-reported; log not shared with the author). The first attempt failed only because the image tag I had guessed did not exist. `mcp-it/src/test/resources/liberty/server.xml` enables `jakartaee-11.0` | `-Dmcp.server=liberty`, image `icr.io/appcafe/open-liberty:full-java21-openj9-ubi-minimal` |
+| Open Liberty | **Verified** (run of 2026-11-09, logs seen by the author). The first attempt failed only because the image tag I had guessed did not exist. `mcp-it/src/test/resources/liberty/server.xml` enables `jakartaee-11.0` | `-Dmcp.server=liberty`, image `icr.io/appcafe/open-liberty:full-java21-openj9-ubi-minimal` |
 
 The code uses only Jakarta EE 11 Web Profile APIs and has now run on three servers (Payara, WildFly, Open Liberty). Open Liberty also ships its own MCP support (`mcp-1.0`); use this library when you need portability across servers or the 2026-07-28 stateless protocol. The image tags above are defaults chosen from the vendors' naming schemes; if one does not exist, override it with `-Dmcp.image=...`. If you run these and something breaks, the failing assertion plus the container log (printed on startup failure) is the useful bug report. CI (`.github/workflows/ci.yml`) runs all three; All three are required to pass.
 
@@ -69,6 +71,8 @@ java -jar payara-micro-7.x.jar --deploy mcp-example/target/mcp-example.war
 ```
 
 Integration tests (`*IT`) run in the `verify` phase through Failsafe and are **skipped, not failed, when Docker is unavailable**.
+
+`scripts/it.sh` runs the integration tests against one or more servers (`scripts/it.sh --servers wildfly`; default is all three) and does not trust `BUILD SUCCESS`: it checks that Docker is usable for Testcontainers (it adds `api.version` to `~/.docker-java.properties` when the engine needs it, and points `DOCKER_HOST` at the active docker context when there is no `/var/run/docker.sock`), pulls the images, runs `mvn clean verify -Dmcp.server=<server>`, reads the Failsafe reports and fails when a test class was skipped, did not run, or failed. Logs, reports and a `summary.txt` (with the image digests) go to `it-logs/<timestamp>/`. Run it from a checkout of the version you want to test. It was written against stand-in `docker` and `mvn` commands and has run once for real: macOS, Docker Desktop 29.9.2, all three servers.
 
 ### Integration tests and Docker troubleshooting
 
@@ -417,9 +421,39 @@ The tickets example publishes `ticket://stats` (and `ticket://<id>`) when a tick
 
 **Limits you must know about**
 - **One thread per open stream.** By default that is a container request thread. It is the simplest thing that works on every server, and it is the main cost of the feature. `mcp.listen.max` (100) and `mcp.listen.max-per-caller` (10) bound it, but a stream count near your HTTP thread pool size will starve normal requests: size the pool, lower the limit, or switch on the async mode below. Over a limit, the server answers 503.
-- **Per instance.** A stream lives on the instance that accepted it, so a change must be published on every instance (a message topic, database notifications, ...) and each instance calls `McpNotifications`. With a single instance there is nothing to do.
-- No resumption: events published while a client is disconnected are lost; the client rereads after reconnecting.
+- **Per instance.** A stream lives on the instance that accepted it, so the clients of the other instances hear nothing unless the change reaches them. With a single instance there is nothing to do; with several, see "Several instances" below.
+- No resumption: events published while a client is disconnected are lost; the client rereads after reconnecting. The spec removed SSE resumption in 2026-07-28 (no event ids, no `Last-Event-ID`), so this is by design.
 - `server/discover` advertises `listChanged` (and `subscribe` for resources) in the capability objects. The revision's pages I could read do not define these fields, so they follow the earlier convention; clients that ignore them still work, because a listen request is answered either way.
+
+### Several instances: the bridge
+
+Behind a load balancer each instance holds some of the streams, and `McpNotifications` only reaches its own. The library has no messaging of its own, so it hands every change to a `McpNotificationBridge` that you write on top of what you already run (a JMS topic, database notifications, a cache event, ...). Make it a CDI bean:
+
+```java
+@ApplicationScoped
+public class TopicBridge implements McpNotificationBridge {
+
+    @Inject McpNotifications notifications;
+
+    @Override
+    public void publish(McpChange change) throws Exception {
+        topic.send(change.encode());                          // a short JSON text
+    }
+
+    void onMessage(String text) {                             // your subscriber, running on every instance
+        notifications.receive(McpChange.decode(text));        // tells the clients of this instance
+    }
+}
+```
+
+Then one call anywhere reaches every instance: `notifications.resourceUpdated("ticket://7")` tells the local clients at once and passes the change to `publish`; on the other instances `receive` tells theirs. What to know:
+
+- **Calls still never block.** A separate thread hands the changes to the bridge, one at a time and in order, so a slow broker does not slow the code that announces a change. `publish` may block. An exception is logged and drops that one change.
+- **No loops, no echo.** `receive` never publishes again, and it ignores a change that carries this instance's `instanceId()`, so a topic that delivers to its sender is fine.
+- **The queue is bounded (1000 changes).** A change that is still waiting is not queued twice. If the bridge stays slow and the queue fills, further changes are dropped with a warning; they are lost for the other instances, like any change made while the transport is down. Clients that listen should read the lists again after they reconnect.
+- **Registrations are not carried.** `McpRegistrations` changes the registry of its own instance, so make the same call on each instance (at startup, or from your own topic). It tells the local clients and does not publish, because telling other instances' clients before their registry changed would send them to a list that has not changed yet.
+- **The bridge is looked up on the first change,** not at startup, because a bridge normally injects `McpNotifications`. Several bridges are all used. The decoder accepts at most 8192 characters and refuses anything that is not a change of this version; treat the topic as untrusted input if other systems can write to it.
+- **Tested here with an in-memory topic only.** It has not been run against a real broker, and not through a container.
 
 ### Async mode: virtual threads
 
@@ -482,7 +516,7 @@ Scenarios for features this server does not implement are expected to fail: the 
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; `unevaluatedProperties`/`unevaluatedItems`, `format` assertions and remote `$ref` in argument validation (see Argument validation); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); keep-alive comments on a streamed `tools/call` (only listen streams have them); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `x-mcp-header` / `Mcp-Param-*` headers; `unevaluatedProperties`/`unevaluatedItems`, `format` assertions and remote `$ref` in argument validation (see Argument validation); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
 
 ## Decisions worth a second look
 

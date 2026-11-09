@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Notification bridge:** `McpNotificationBridge` passes every change announced to `McpNotifications` on to the other server instances, and `McpNotifications.receive(McpChange)` tells the clients of the receiving instance. `McpChange` encodes a change as a short JSON text. A separate thread hands changes to the bridge, so announcing a change still never blocks; the queue holds 1000 changes. See "Several instances" in the README.
+- **`scripts/it.sh`:** runs the integration tests on one or more servers, prepares Docker for Testcontainers, and fails when test classes were skipped instead of reporting `BUILD SUCCESS`.
+
+- **Integration tests** for dynamic registration, argument validation over HTTP, the notification bridge between two instances and token introspection against Keycloak, with the new test-only `mcp-it-fixture` module. Passed on Payara, WildFly and Open Liberty (2026-11-09).
+
+### Changed
+- `McpNotifications` has a second constructor, `McpNotifications(McpConfig, Instance<McpNotificationBridge>)`, which CDI uses; `McpNotifications(McpConfig)` still works and has no bridge.
+- `McpRegistrations` tells the clients of its own instance only and does not publish to a bridge: the registry is per instance, so make the same registration call on every instance.
+
 ## 0.4.0
 
 ### Added
