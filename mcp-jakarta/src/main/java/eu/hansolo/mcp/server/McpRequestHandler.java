@@ -123,7 +123,7 @@ public class McpRequestHandler {
     /**
      * Handles one POST to the MCP endpoint.
      *
-     * @param headers case-insensitive request header lookup, returning null for absent headers
+     * @param rawHeaders case-insensitive request header lookup, returning null for absent headers
      * @param body    the request body; it is read at most {@code mcp.max-body-bytes + 1} bytes
      * @return usually a JSON body. A {@code tools/call} that carries a {@code progressToken} from a client that lists
      *         {@code text/event-stream} in {@code Accept} gets a streamed (Server-Sent Events) response instead. Everything that can
