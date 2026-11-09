@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-11-09)
 
 ### Added
 - **Notification bridge:** `McpNotificationBridge` passes every change announced to `McpNotifications` on to the other server instances, and `McpNotifications.receive(McpChange)` tells the clients of the receiving instance. `McpChange` encodes a change as a short JSON text. A separate thread hands changes to the bridge, so announcing a change still never blocks; the queue holds 1000 changes. See "Several instances" in the README.
@@ -22,7 +22,7 @@
 
 - **Keep-alive on streamed `tools/call`:** while a streamed call runs, the server writes an SSE comment line whenever the stream has been quiet for `mcp.listen.keepalive-ms`. A failed write cancels the call even if the tool reports no progress; `ToolCall.isCancelled()` and `ProgressReporter.isCancelled()` tell the tool. `KeepAliveIT` added (passes on all three servers).
 
-- **Parameter headers:** the `x-mcp-header` schema annotation and `Mcp-Param-*` request headers. The server checks the headers against the arguments on `tools/call` (HTTP 400, `-32020`) and refuses invalid annotations at registration; `@McpParam(header = ...)` emits the annotation. New fixture tool `routed_echo` and `ParamHeadersIT` (7 tests, pass on all three servers); the conformance fixture has `test_custom_header` (name unconfirmed).
+- **Parameter headers:** the `x-mcp-header` schema annotation and `Mcp-Param-*` request headers. The server checks the headers against the arguments on `tools/call` (HTTP 400, `-32020`) and refuses invalid annotations at registration; `@McpParam(header = ...)` emits the annotation. New fixture tool `routed_echo` and `ParamHeadersIT` (7 tests, pass on all three servers); the conformance fixture has `test_custom_header`.
 
 - **Skills (experimental):** `McpSkill` (with `of` and `fromClasspath`), announced as `io.modelcontextprotocol/skills`; `skills/list`, `skills/get`, skill files through `resources/read`, and `resources/directory/read`. Manifests with SHA-256 digests are computed at startup and invalid skills fail the deployment. `SkillsIT` added (passes on all three servers).
 
