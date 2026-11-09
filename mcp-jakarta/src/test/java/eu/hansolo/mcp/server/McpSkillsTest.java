@@ -1,0 +1,145 @@
+package eu.hansolo.mcp.server;
+
+import eu.hansolo.mcp.api.McpSkill;
+import eu.hansolo.mcp.api.McpToolHandler;
+import eu.hansolo.mcp.protocol.ErrorCodes;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonObjectBuilder;
+import jakarta.json.JsonReader;
+import org.junit.jupiter.api.Test;
+
+import java.io.ByteArrayInputStream;
+import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class McpSkillsTest {
+
+    private static final String VERSION = "2026-07-28";
+    private static final String MAIN    = "---\nname: code-review\ndescription: Review code.\n---\n\n# Code review\n";
+
+    private final McpConfig config = new McpConfig(null, 1024, 5_000L, "test-server", "1.2.3", null);
+
+    private McpRequestHandler withSkill() {
+        Map<String, String> files = new LinkedHashMap<>();
+        files.put("SKILL.md", MAIN);
+        files.put("references/checklist.md", "# Checklist\n");
+        return new McpRequestHandler(McpRegistry.of(List.<McpToolHandler>of(), List.of(McpSkill.of("code-review", files))), config);
+    }
+
+    private McpRequestHandler withoutSkill() {
+        return new McpRequestHandler(McpRegistry.of(List.<McpToolHandler>of()), config);
+    }
+
+    // ---- discovery -------------------------------------------------------------------------------------------------
+
+    @Test
+    void discoverAnnouncesTheExtensionAndResources() {
+        JsonObject capabilities = result(call(withSkill(), "server/discover", null, null)).getJsonObject("capabilities");
+        assertTrue(capabilities.containsKey("resources"));
+        assertTrue(capabilities.getJsonObject("extensions").getJsonObject("io.modelcontextprotocol/skills").getBoolean("directoryRead"));
+    }
+
+    @Test
+    void withoutSkillsTheMethodsDoNotExist() {
+        McpRequestHandler handler = withoutSkill();
+        assertFalse(result(call(handler, "server/discover", null, null)).getJsonObject("capabilities").containsKey("extensions"));
+        assertEquals(ErrorCodes.METHOD_NOT_FOUND, error(call(handler, "skills/list", null, null)).getInt("code"));
+        assertEquals(ErrorCodes.METHOD_NOT_FOUND, error(call(handler, "skills/get", Json.createObjectBuilder().add("uri", "skill://a/SKILL.md").build(), null)).getInt("code"));
+        assertEquals(ErrorCodes.METHOD_NOT_FOUND, error(call(handler, "resources/directory/read", Json.createObjectBuilder().add("uri", "skill://a").build(), null)).getInt("code"));
+    }
+
+    // ---- list and get ----------------------------------------------------------------------------------------------
+
+    @Test
+    void listCarriesFrontmatterAndTheManifest() {
+        JsonObject result = result(call(withSkill(), "skills/list", null, null));
+        assertEquals("complete", result.getString("resultType"));
+        assertEquals(5_000, result.getJsonNumber("ttlMs").longValue());
+        assertEquals("public", result.getString("cacheScope"));
+        JsonObject entry = result.getJsonArray("skills").getJsonObject(0);
+        assertEquals("skill://code-review/SKILL.md", entry.getString("uri"));
+        assertEquals("code-review", entry.getJsonObject("frontmatter").getString("name"));
+        assertEquals(2, entry.getJsonArray("resources").size());
+        JsonObject first = entry.getJsonArray("resources").getJsonObject(0);
+        assertEquals("skill://code-review/SKILL.md", first.getString("uri"));
+        assertTrue(first.getString("digest").startsWith("sha256:"));
+        assertEquals(MAIN.getBytes(StandardCharsets.UTF_8).length, first.getInt("size"));
+    }
+
+    @Test
+    void getReturnsTheSameEntryAndRefusesUnknownUris() {
+        McpRequestHandler handler = withSkill();
+        JsonObject skill = result(call(handler, "skills/get", Json.createObjectBuilder().add("uri", "skill://code-review/SKILL.md").build(), null)).getJsonObject("skill");
+        assertEquals("skill://code-review/SKILL.md", skill.getString("uri"));
+        assertEquals(ErrorCodes.INVALID_PARAMS, error(call(handler, "skills/get", Json.createObjectBuilder().add("uri", "skill://code-review/references/checklist.md").build(), null)).getInt("code"));
+        assertEquals(ErrorCodes.INVALID_PARAMS, error(call(handler, "skills/get", Json.createObjectBuilder().add("uri", "skill://nope/SKILL.md").build(), null)).getInt("code"));
+        assertEquals(ErrorCodes.INVALID_PARAMS, error(call(handler, "skills/get", Json.createObjectBuilder().build(), null)).getInt("code"));
+    }
+
+    // ---- reading ---------------------------------------------------------------------------------------------------
+
+    @Test
+    void filesAreReadThroughResourcesRead() {
+        McpRequestHandler handler = withSkill();
+        JsonObject main = result(call(handler, "resources/read", Json.createObjectBuilder().add("uri", "skill://code-review/SKILL.md").build(), "skill://code-review/SKILL.md")).getJsonArray("contents").getJsonObject(0);
+        assertEquals("text/markdown", main.getString("mimeType"));
+        assertEquals(MAIN, main.getString("text"));
+        JsonObject support = result(call(handler, "resources/read", Json.createObjectBuilder().add("uri", "skill://code-review/references/checklist.md").build(), "skill://code-review/references/checklist.md")).getJsonArray("contents").getJsonObject(0);
+        assertEquals("# Checklist\n", support.getString("text"));
+    }
+
+    @Test
+    void directoriesListTheirChildren() {
+        McpRequestHandler handler = withSkill();
+        JsonObject root = result(call(handler, "resources/directory/read", Json.createObjectBuilder().add("uri", "skill://code-review").build(), null));
+        assertEquals(2, root.getJsonArray("resources").size());
+        JsonObject first = root.getJsonArray("resources").getJsonObject(0);
+        assertEquals("SKILL.md", first.getString("name"));
+        assertEquals("skill://code-review/SKILL.md", first.getString("uri"));
+        JsonObject second = root.getJsonArray("resources").getJsonObject(1);
+        assertEquals("inode/directory", second.getString("mimeType"));
+        JsonObject refs = result(call(handler, "resources/directory/read", Json.createObjectBuilder().add("uri", "skill://code-review/references").build(), null));
+        assertEquals("skill://code-review/references/checklist.md", refs.getJsonArray("resources").getJsonObject(0).getString("uri"));
+        assertEquals(ErrorCodes.INVALID_PARAMS, error(call(handler, "resources/directory/read", Json.createObjectBuilder().add("uri", "skill://code-review/none").build(), null)).getInt("code"));
+    }
+
+    // ---- helpers ---------------------------------------------------------------------------------------------------
+
+    private McpHttpResponse call(McpRequestHandler handler, String method, JsonObject extra, String name) {
+        Map<String, String> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        headers.put("MCP-Protocol-Version", VERSION);
+        headers.put("Mcp-Method", method);
+        if (name != null) {
+            headers.put("Mcp-Name", name);
+        }
+        JsonObjectBuilder params = extra == null ? Json.createObjectBuilder() : Json.createObjectBuilder(extra);
+        JsonObject meta = Json.createObjectBuilder().add("io.modelcontextprotocol/protocolVersion", VERSION).add("io.modelcontextprotocol/clientInfo", Json.createObjectBuilder().add("name", "test-client").add("version", "0")).add("io.modelcontextprotocol/clientCapabilities", Json.createObjectBuilder()).build();
+        params.add("_meta", meta);
+        String body = Json.createObjectBuilder().add("jsonrpc", "2.0").add("id", 1).add("method", method).add("params", params).build().toString();
+        return handler.handle(headers::get, new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static JsonObject json(McpHttpResponse response) {
+        try (JsonReader reader = Json.createReader(new StringReader(response.body()))) {
+            return reader.readObject();
+        }
+    }
+
+    private static JsonObject result(McpHttpResponse response) {
+        assertEquals(200, response.status(), response.body());
+        return json(response).getJsonObject("result");
+    }
+
+    private static JsonObject error(McpHttpResponse response) {
+        return json(response).getJsonObject("error");
+    }
+}

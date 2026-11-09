@@ -232,6 +232,9 @@ public class McpRequestHandler {
         if (method.startsWith("prompts/") && !registry.hasPrompts() || method.startsWith("resources/") && !registry.hasResources() || method.equals("completion/complete") && !registry.hasCompletions()) {
             throw McpProtocolException.methodNotFound(method);
         }
+        if ((method.startsWith("skills/") || method.equals("resources/directory/read")) && !registry.hasSkills()) {
+            throw McpProtocolException.methodNotFound(method);
+        }
         return validate(method, message, headers, caller);
     }
 
@@ -247,6 +250,9 @@ public class McpRequestHandler {
             case "resources/templates/list" -> resourceTemplatesList(context);
             case "resources/read" -> resourcesRead(context);
             case "completion/complete" -> completionComplete(context);
+            case "skills/list" -> skillsList(context);
+            case "skills/get" -> skillsGet(context);
+            case "resources/directory/read" -> directoryRead(context);
             default -> throw McpProtocolException.methodNotFound(method);
         };
         return withServerInfo(result);
@@ -320,8 +326,12 @@ public class McpRequestHandler {
         if (registry.hasCompletions()) {
             capabilities.add("completions", Json.createObjectBuilder());
         }
-        if (!extensions.isEmpty()) {
-            capabilities.add("extensions", extensions.toJson());
+        if (!extensions.isEmpty() || registry.hasSkills()) {
+            JsonObjectBuilder announced = Json.createObjectBuilder(extensions.toJson());
+            if (registry.hasSkills() && !extensions.announces(SkillSet.EXTENSION_ID)) {
+                announced.add(SkillSet.EXTENSION_ID, Json.createObjectBuilder().add("directoryRead", true));
+            }
+            capabilities.add("extensions", announced);
         }
         result.add("capabilities", capabilities);
         if (config.instructions() != null) {
@@ -540,6 +550,65 @@ public class McpRequestHandler {
             completion.add("total", outcome.total());
         }
         return Json.createObjectBuilder().add("resultType", "complete").add("completion", completion.add("hasMore", more)).build();
+    }
+
+    // ---- skills ----------------------------------------------------------------------------------------------------
+
+    private JsonObject skillsList(RequestContext context) {
+        Page<SkillSet.Skill> page = page(context, registry.skills().list(), SkillSet.Skill::requiredScopes, SkillSet.Skill::name);
+        JsonArrayBuilder skills = Json.createArrayBuilder();
+        page.items().forEach(skill -> skills.add(skill.toJson()));
+        return listResult("skills", skills, page.nextCursor());
+    }
+
+    private JsonObject skillsGet(RequestContext context) {
+        String uri = uriParam(context);
+        SkillSet.Skill skill = registry.skills().get(uri).orElseThrow(() -> unknownSkill(uri));
+        if (!visible(context.caller(), skill.requiredScopes())) {
+            throw new AuthChallengeException("Insufficient scope for skill " + abbreviate(skill.name()), String.join(" ", skill.requiredScopes()));
+        }
+        boolean perCaller = authConfig.enabled() && !registry.scopedPrimitives().isEmpty();
+        return Json.createObjectBuilder().add("resultType", "complete").add("skill", skill.toJson()).add("ttlMs", config.cacheTtlMs()).add("cacheScope", perCaller ? "private" : "public").build();
+    }
+
+    private JsonObject directoryRead(RequestContext context) {
+        String uri = uriParam(context);
+        SkillSet.Directory directory = registry.skills().directory(uri).orElseThrow(() -> unknownSkill(uri));
+        if (!visible(context.caller(), directory.skill().requiredScopes())) {
+            throw new AuthChallengeException("Insufficient scope for skill " + abbreviate(directory.skill().name()), String.join(" ", directory.skill().requiredScopes()));
+        }
+        List<Map.Entry<String, String>> children = new ArrayList<>(directory.children().entrySet());
+        int from = 0;
+        JsonValue cursor = context.params().get("cursor");
+        if (cursor != null && cursor != JsonValue.NULL) {
+            String after = decodeCursor(cursor);
+            while (from < children.size() && children.get(from).getKey().compareTo(after) <= 0) {
+                from++;
+            }
+        }
+        int size = config.pageSize();
+        int to = size > 0 ? Math.min(children.size(), from + size) : children.size();
+        JsonArrayBuilder resources = Json.createArrayBuilder();
+        for (Map.Entry<String, String> child : children.subList(from, to)) {
+            resources.add(Json.createObjectBuilder().add("uri", uri + "/" + child.getKey()).add("name", child.getKey()).add("mimeType", child.getValue()));
+        }
+        JsonObjectBuilder result = Json.createObjectBuilder().add("resultType", "complete").add("resources", resources);
+        if (to < children.size()) {
+            result.add("nextCursor", encodeCursor(children.get(to - 1).getKey()));
+        }
+        boolean perCaller = authConfig.enabled() && !registry.scopedPrimitives().isEmpty();
+        return result.add("ttlMs", config.cacheTtlMs()).add("cacheScope", perCaller ? "private" : "public").build();
+    }
+
+    private static String uriParam(RequestContext context) {
+        if (!(context.params().get("uri") instanceof JsonString uri) || uri.getString().length() > MAX_URI) {
+            throw McpProtocolException.malformedParams("params.uri must be a string of at most " + MAX_URI + " characters");
+        }
+        return uri.getString();
+    }
+
+    private static McpProtocolException unknownSkill(String uri) {
+        return new McpProtocolException(200, ErrorCodes.INVALID_PARAMS, "Unknown skill or directory", Json.createObjectBuilder().add("uri", abbreviate(uri)).build());
     }
 
     private JsonObject resourcesRead(RequestContext context) {

@@ -10,7 +10,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 
 - **What has been run:** `mvn verify` of the original server (discover, tools/list, tools/call, MRTR) passed on the author's machine, and the server was exercised with MCP Inspector (`--protocol-era modern`) and curl against Payara Micro.
 - **Verified on the author's machine (macOS, Docker Desktop 29, Payara Micro 7.2026.10 Build 18 via `payara/micro:latest`, Keycloak 26.4):** `mvn clean verify` passed with 145 unit tests and 46 integration tests (30 in `McpServerIT` at the time, 34 now with the completion tests, 9 in `McpAuthServerIT` with a test issuer, 7 in `McpKeycloakIT` with a real Keycloak). That covers CDI scanning of `@McpTool` / `@McpResource` / `@McpPrompt` beans, the well-known metadata endpoint, 401/403 challenges, audience binding, MRTR and the `eu.hansolo.mcp` rename.
-- **Integration run of 2026-11-09 (`scripts/it.sh`; the author has seen the logs):** 107 integration tests passed on Payara (`payara/micro:latest`) and on WildFly (`quay.io/wildfly/wildfly:latest-jdk21`), and 97 on Open Liberty (`full-java21-openj9-ubi-minimal`; the tickets test is skipped there by design). Per class: `McpServerIT` 41, `McpAsyncListenIT` 3, `McpAuthServerIT` 9, `McpKeycloakIT` 7, `McpTicketsKeycloakIT` 10, `DynamicRegistrationIT` 5, `ArgumentValidationIT` 11, `IntrospectionIT` 6, `NotificationBridgeIT` 5, `ExtensionsIT` 5, `AppsIT` 5. Setup: macOS, Docker Desktop 29.9.2, JDK 25 compiling to release 21, Keycloak 26.4, Testcontainers 2.0.1. The tested tree was v0.4.0 plus the unreleased notification bridge, the script and the new tests (`v0.4.0-1-g9e1dbfe-dirty`), not the bare tag. The run of 09:27 does not include the trace-context support, which has unit tests only.
+- **Integration run of 2026-11-09, 10:13 to 10:20 (`scripts/it.sh`; the author has seen the logs):** 123 integration tests passed on Payara (`payara/micro:latest`) and on WildFly (`quay.io/wildfly/wildfly:latest-jdk21`), and 113 on Open Liberty (`full-java21-openj9-ubi-minimal`; the tickets test is skipped there by design). Per class: `McpServerIT` 41, `McpAsyncListenIT` 3, `McpAuthServerIT` 9, `McpKeycloakIT` 7, `McpTicketsKeycloakIT` 10, `DynamicRegistrationIT` 5, `ArgumentValidationIT` 11, `IntrospectionIT` 6, `NotificationBridgeIT` 5, `ExtensionsIT` 5, `AppsIT` 5, `ElicitationIT` 7, `KeepAliveIT` 2, `ParamHeadersIT` 7. Setup: macOS, Docker Desktop 29.9.2, JDK 25 compiling to release 21, Keycloak 26.4, Testcontainers 2.0.1. The tested tree was v0.4.0 plus the unreleased work up to and including trace context, elicitation, keep-alive and parameter headers (`v0.4.0-1-g9e1dbfe-dirty`), not the bare tag. Trace context has unit tests only. The MCP conformance suite has not been run against this tree.
 - **Tickets example:** `mvn clean verify` passes on Payara with Keycloak (178 unit tests at that time, 8 tickets integration tests). Passes on WildFly (reported by the user). **Open Liberty:** the tickets example does not start there without a data source: Liberty creates a container-managed `EntityManagerFactory` for `@PersistenceUnit` and looks for `java:comp/DefaultDataSource` instead of using the `jakarta.persistence.jdbc.*` properties of the example's resource-local unit. The tickets integration test is therefore skipped on Liberty. A `<dataSource id="DefaultDataSource">` in `server.xml` with the H2 jar on the server should fix it (untested).
 - **Streaming (progress notifications over SSE):** passes on Payara (`mvn clean verify`, 4 streaming integration tests, including one that proves events arrive while the tool is still running and one that resets the connection and checks that the tool is told). The first version, a JAX-RS `StreamingOutput`, was buffered by Jersey; the servlet-based version fixed that. WildFly and Open Liberty: passed in the run of 2026-11-09 (see above).
 - **Notifications (`subscriptions/listen`, list-changed, resource updates):** passes on Payara (13 unit tests, 3 integration tests in `McpServerIT`, 2 in `McpTicketsKeycloakIT`). WildFly and Open Liberty: passed in the run of 2026-11-09 (see above).
@@ -560,6 +560,41 @@ An absent or `null` argument needs no header. `Mcp-Param-*` headers the schema d
 
 The specification's limits are checked when the tool is registered, and a violation stops the application at startup (or fails `McpRegistrations`) with the tool name: the name must be a non-empty HTTP token and unique ignoring case, the property must be a `string`, `integer` or `boolean` (not `number`), and it must be reachable from the root through `properties` alone, so not under `items`, `oneOf`/`anyOf`/`allOf`, `if`/`then`/`else` or `$ref`. A repeated header reaches the server as one comma-joined value from most containers and fails the comparison.
 
+## Skills (experimental)
+
+The Skills extension (`io.modelcontextprotocol/skills`, SEP-2640) lets a server hand Agent Skills to clients: a directory with a `SKILL.md` and supporting files, read through the ordinary `resources/read`. The wire format was still being revised when this was written (the SEP and the published extension page differ in details), so treat this as experimental.
+
+Provide skills as beans:
+
+```java
+@ApplicationScoped
+public class MySkills {
+
+    @Produces
+    McpSkill codeReview() {
+        return McpSkill.fromClasspath(MySkills.class.getClassLoader(), "code-review", "skills/code-review", "SKILL.md", "references/checklist.md");
+    }
+}
+```
+
+`McpSkill.of(name, Map<String, String>)` builds one from text held in memory; or implement `McpSkill` yourself (`name()`, `files()` as bytes, optional `frontmatter()` and `requiredScopes()`). A classpath cannot be listed the same way on every server, so `fromClasspath` takes the file names.
+
+As soon as one skill exists, `server/discover` announces `resources` and `io.modelcontextprotocol/skills` with `directoryRead: true`, and the server answers
+
+- `skills/list` (paginated, with `ttlMs`/`cacheScope`) and `skills/get`: the entry is `{uri, frontmatter, resources}`, where `resources` is the manifest of every file with its URI, SHA-256 digest and size, computed from the bytes your skill returns;
+- `resources/read` for every file at `skill://<name>/<path>` (text, or base64 for files that are not UTF-8);
+- `resources/directory/read` for the direct children of a skill's directories.
+
+Everything is checked at startup, and a violation stops the application with the skill name: the name is URI-safe and equals `name` in the frontmatter, `SKILL.md` starts with YAML frontmatter with `name` and `description`, file paths have no `..`, empty or odd segments, and no two skills share a name. More than 512 files or 16 MiB per skill only logs a warning (the specification says "should not").
+
+Limits to know about:
+
+- The built-in frontmatter reader handles the flat subset of YAML: `key: value` with plain, quoted, boolean and integer scalars, and `>` / `|` blocks. Nested values (`metadata:`, lists) are refused with a message; override `McpSkill.frontmatter()` to give the fields as JSON. Hosts compare these fields with their own parse of the file, so the two must agree: `version: 3` is a number here, as it is in YAML, and `version: "3"` is a string.
+- The digests are taken at startup; a skill whose `files()` changes later is not noticed.
+- Generated skills (`"resources": "dynamic"`) are not supported.
+- `skills/list` returns whole entries, never a split manifest; `requiredScopes()` hides a skill from callers without the scopes.
+- Tested with unit tests and `SkillsIT` against the fixture WAR (which serves one skill from memory and one from the WAR). No host that loads skills has been tried against it.
+
 ## Trace context
 
 A client can put OpenTelemetry trace context into the `_meta` of a request: `traceparent`, `tracestate` and `baggage`. These three keys are the one exception to the `prefix/name` rule for `_meta` keys. `call.trace()` on `ToolCall`, `PromptCall`, `ResourceCall` and `CompletionCall` returns a `TraceContext` (never null; `TraceContext.EMPTY` when the client sent none):
@@ -664,7 +699,7 @@ Scenarios for features this server does not implement are expected to fail: the 
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; `unevaluatedProperties`/`unevaluatedItems`, `format` assertions and remote `$ref` in argument validation (see Argument validation); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); the Tasks extension; skills with `"resources": "dynamic"`; `unevaluatedProperties`/`unevaluatedItems`, `format` assertions and remote `$ref` in argument validation (see Argument validation); recursive record types in `@McpTool` signatures (no `$ref` support); 2025-11-25 compatibility.
 
 ## Decisions worth a second look
 

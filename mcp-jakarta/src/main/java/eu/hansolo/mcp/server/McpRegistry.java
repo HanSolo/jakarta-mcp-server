@@ -10,6 +10,8 @@ import eu.hansolo.mcp.api.McpCompletionHandler;
 import eu.hansolo.mcp.api.McpPromptHandler;
 import eu.hansolo.mcp.api.McpResourceHandler;
 import eu.hansolo.mcp.api.McpResourceTemplateHandler;
+import eu.hansolo.mcp.api.McpSkill;
+import eu.hansolo.mcp.api.ResourceContent;
 import eu.hansolo.mcp.api.McpToolHandler;
 import eu.hansolo.mcp.api.Meta;
 import eu.hansolo.mcp.api.ResourceCall;
@@ -44,36 +46,43 @@ public class McpRegistry {
     private final ConcurrentNavigableMap<String, McpPromptHandler> prompts;
     private volatile boolean                            promptsEnabled;
     private final Map<String, McpCompletionHandler>     completions;
+    private final SkillSet                              skills;
 
 
     @Inject
-    public McpRegistry(Instance<McpToolHandler> tools, Instance<McpResourceHandler> resources, Instance<McpResourceTemplateHandler> templates, Instance<McpPromptHandler> prompts, Instance<McpCompletionHandler> completions, CdiAnnotationScanner annotated) {
-        this(concat(tools, annotated.tools()), concat(resources, annotated.resources()), concat(templates, annotated.templates()), concat(prompts, annotated.prompts()), concat(completions, annotated.completions()));
+    public McpRegistry(Instance<McpToolHandler> tools, Instance<McpResourceHandler> resources, Instance<McpResourceTemplateHandler> templates, Instance<McpPromptHandler> prompts, Instance<McpCompletionHandler> completions, CdiAnnotationScanner annotated, Instance<McpSkill> skills) {
+        this(concat(tools, annotated.tools()), concat(resources, annotated.resources()), concat(templates, annotated.templates()), concat(prompts, annotated.prompts()), concat(completions, annotated.completions()), skills);
     }
 
-    private McpRegistry(Iterable<? extends McpToolHandler> tools, Iterable<? extends McpResourceHandler> resources, Iterable<? extends McpResourceTemplateHandler> templates, Iterable<? extends McpPromptHandler> prompts, Iterable<? extends McpCompletionHandler> completions) {
+    private McpRegistry(Iterable<? extends McpToolHandler> tools, Iterable<? extends McpResourceHandler> resources, Iterable<? extends McpResourceTemplateHandler> templates, Iterable<? extends McpPromptHandler> prompts, Iterable<? extends McpCompletionHandler> completions, Iterable<? extends McpSkill> skills) {
         this.tools     = collectTools(tools);
         this.resources = collectResources(resources);
         this.templates = collectTemplates(templates);
         this.prompts   = collectPrompts(prompts);
         this.completions = collectCompletions(completions);
+        this.skills      = new SkillSet(skills);
         this.tools.values().forEach(this::checkAppBinding);
     }
 
 
     /** Builds a registry with tools only, without CDI (tests, other containers). */
     public static McpRegistry of(Iterable<? extends McpToolHandler> tools) {
-        return new McpRegistry(tools, List.of(), List.of(), List.of(), List.of());
+        return new McpRegistry(tools, List.of(), List.of(), List.of(), List.of(), List.of());
+    }
+
+    /** Builds a registry with tools and skills only, without CDI (tests, other containers). */
+    public static McpRegistry of(Iterable<? extends McpToolHandler> tools, Iterable<? extends McpSkill> skills) {
+        return new McpRegistry(tools, List.of(), List.of(), List.of(), List.of(), skills);
     }
 
     /** Builds a registry with everything, without CDI. */
     public static McpRegistry of(Iterable<? extends McpToolHandler> tools, Iterable<? extends McpResourceHandler> resources, Iterable<? extends McpResourceTemplateHandler> templates, Iterable<? extends McpPromptHandler> prompts) {
-        return new McpRegistry(tools, resources, templates, prompts, List.of());
+        return new McpRegistry(tools, resources, templates, prompts, List.of(), List.of());
     }
 
     /** Builds a registry with everything including completion sources, without CDI. */
     public static McpRegistry of(Iterable<? extends McpToolHandler> tools, Iterable<? extends McpResourceHandler> resources, Iterable<? extends McpResourceTemplateHandler> templates, Iterable<? extends McpPromptHandler> prompts, Iterable<? extends McpCompletionHandler> completions) {
-        return new McpRegistry(tools, resources, templates, prompts, completions);
+        return new McpRegistry(tools, resources, templates, prompts, completions, List.of());
     }
 
     private static <T> List<T> concat(Iterable<T> first, Iterable<? extends T> second) {
@@ -104,7 +113,7 @@ public class McpRegistry {
     }
 
     public boolean hasResources() {
-        return !resources.isEmpty() || !templates.isEmpty();
+        return !resources.isEmpty() || !templates.isEmpty() || !skills.isEmpty();
     }
 
     /** The resource for this URI: an exact fixed resource first, otherwise the first template (in template order) that matches. */
@@ -113,6 +122,11 @@ public class McpRegistry {
         if (fixed != null) {
             return Optional.of(new ResolvedResource(fixed.requiredScopes(), Map.of(), fixed::read));
         }
+        var skillFile = skills.file(uri);
+        if (skillFile.isPresent()) {
+            SkillSet.Located located = skillFile.get();
+            return Optional.of(new ResolvedResource(located.skill().requiredScopes(), Map.of(), call -> ResourceResult.of(skillContent(located.file()))));
+        }
         for (TemplateEntry entry : templates.values()) {
             Optional<Map<String, String>> variables = entry.template().match(uri);
             if (variables.isPresent()) {
@@ -120,6 +134,21 @@ public class McpRegistry {
             }
         }
         return Optional.empty();
+    }
+
+    // ---- skills ----------------------------------------------------------------------------------------------------
+
+    /** True if the deployment offers skills (the Skills extension is then announced). */
+    public boolean hasSkills() {
+        return !skills.isEmpty();
+    }
+
+    SkillSet skills() {
+        return skills;
+    }
+
+    private static ResourceContent skillContent(SkillSet.File file) {
+        return SkillSet.isText(file.mimeType()) ? ResourceContent.text(file.uri(), file.mimeType(), new String(file.bytes(), java.nio.charset.StandardCharsets.UTF_8)) : ResourceContent.blob(file.uri(), file.mimeType(), file.bytes());
     }
 
     // ---- prompts ---------------------------------------------------------------------------------------------------
@@ -189,6 +218,7 @@ public class McpRegistry {
         templates.values().stream().filter(t -> !t.handler().requiredScopes().isEmpty()).forEach(t -> found.add("Resource template '" + t.handler().uriTemplate() + "' requires " + t.handler().requiredScopes()));
         prompts.values().stream().filter(p -> !p.requiredScopes().isEmpty()).forEach(p -> found.add("Prompt '" + p.name() + "' requires " + p.requiredScopes()));
         completions.values().stream().filter(c -> !c.requiredScopes().isEmpty()).forEach(c -> found.add("Completion for " + c.target() + " argument " + c.argument() + " requires " + c.requiredScopes()));
+        skills.list().stream().filter(k -> !k.requiredScopes().isEmpty()).forEach(k -> found.add("Skill '" + k.name() + "' requires " + k.requiredScopes()));
         return found;
     }
 
