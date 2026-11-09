@@ -119,6 +119,7 @@ class ParamHeadersTest {
         rejects(s, Json.createObjectBuilder().add("name", text).build(), headers("Mcp-Param-Name", "=?base64?!!!?="));
         rejects(s, Json.createObjectBuilder().add("name", text).build(), headers("Mcp-Param-Name", text));
         rejects(s, JsonObject.EMPTY_JSON_OBJECT, headers("Mcp-Param-Name", "=?base64?!!!?="));
+        rejects(s, Json.createObjectBuilder().add("name", "Hello").build(), headers("Mcp-Param-Name", "=?base64?SGVsbG8?="));
     }
 
     @Test

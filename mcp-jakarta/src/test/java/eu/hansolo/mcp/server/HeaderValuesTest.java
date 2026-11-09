@@ -20,5 +20,7 @@ class HeaderValuesTest {
     @Test
     void rejectsMalformedBase64() {
         assertThrows(IllegalArgumentException.class, () -> HeaderValues.decode("=?base64?***?="));
+        assertThrows(IllegalArgumentException.class, () -> HeaderValues.decode("=?base64?SGVsbG8?="));
+        assertThrows(IllegalArgumentException.class, () -> HeaderValues.decode("=?base64?SGVsbG8sIOS4lueVjA?="));
     }
 }

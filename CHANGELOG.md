@@ -24,9 +24,10 @@
 
 - **Parameter headers:** the `x-mcp-header` schema annotation and `Mcp-Param-*` request headers. The server checks the headers against the arguments on `tools/call` (HTTP 400, `-32020`) and refuses invalid annotations at registration; `@McpParam(header = ...)` emits the annotation. New fixture tool `routed_echo` and `ParamHeadersIT` (7 tests, pass on all three servers); the conformance fixture has `test_custom_header` (name unconfirmed).
 
-- **Skills (experimental):** `McpSkill` (with `of` and `fromClasspath`), announced as `io.modelcontextprotocol/skills`; `skills/list`, `skills/get`, skill files through `resources/read`, and `resources/directory/read`. Manifests with SHA-256 digests are computed at startup and invalid skills fail the deployment. `SkillsIT` added (not yet run on a real server).
+- **Skills (experimental):** `McpSkill` (with `of` and `fromClasspath`), announced as `io.modelcontextprotocol/skills`; `skills/list`, `skills/get`, skill files through `resources/read`, and `resources/directory/read`. Manifests with SHA-256 digests are computed at startup and invalid skills fail the deployment. `SkillsIT` added (passes on all three servers).
 
 ### Fixed
+- Base64 header values (`=?base64?...?=`, for `Mcp-Name` and `Mcp-Param-*`) without padding were accepted because the JDK decoder does not require it; they are now rejected with `HeaderMismatch`, as the specification's test-case table requires (found by the conformance suite).
 - `McpAppsExtension` is now `@Vetoed`. The library archive uses bean discovery mode `all`, so the container registered the base class as a bean as well as any subclass, and the server failed with "Duplicate MCP extension 'io.modelcontextprotocol/ui'" at the first request (found by `AppsIT` on Payara).
 
 ### Changed

@@ -17,11 +17,15 @@ final class HeaderValues {
     /**
      * Returns the decoded value.
      *
-     * @throws IllegalArgumentException if the value uses the base64 sentinel but is not valid base64
+     * @throws IllegalArgumentException if the value uses the base64 sentinel but is not valid, padded base64
      */
     static String decode(String headerValue) {
         if (headerValue.length() >= PREFIX.length() + SUFFIX.length() && headerValue.startsWith(PREFIX) && headerValue.endsWith(SUFFIX)) {
             String encoded = headerValue.substring(PREFIX.length(), headerValue.length() - SUFFIX.length());
+            if (encoded.length() % 4 != 0) {
+                // the JDK decoder accepts missing padding; the specification's test-case table says the server must reject it
+                throw new IllegalArgumentException("base64 value is not padded to a multiple of four characters");
+            }
             return new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
         }
         return headerValue;
