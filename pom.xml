@@ -50,6 +50,7 @@
         <module>mcp-example-tickets</module>
         <module>mcp-example-conformance</module>
         <module>mcp-example-apps</module>
+        <module>mcp-example-tasks</module>
         <module>mcp-it-fixture</module>
         <module>mcp-it</module>
     </modules>

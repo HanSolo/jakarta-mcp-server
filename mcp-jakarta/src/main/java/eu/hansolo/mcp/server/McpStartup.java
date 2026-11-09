@@ -14,7 +14,7 @@ public class McpStartup {
     private static final Logger LOG = Logger.getLogger(McpStartup.class.getName());
 
 
-    void onStart(@Observes @Initialized(ApplicationScoped.class) Object event, McpRegistry registry, McpConfig config, AuthConfig auth, TaskService tasks) {
+    void onStart(@Observes @Initialized(ApplicationScoped.class) Object event, McpRegistry registry, McpConfig config, AuthConfig auth, TaskService tasks, McpNotifications notifications) {
         if (!auth.enabled()) {
             if (!registry.scopedPrimitives().isEmpty()) {
                 throw new IllegalStateException(registry.scopedPrimitives().get(0) + " but mcp.auth.enabled is false, so the scopes could never be enforced");
@@ -26,6 +26,7 @@ public class McpStartup {
         }
         if (tasks.enabled()) {
             tasks.start();
+            tasks.onChange(notifications::taskChanged);
             if (tasks.usesMemoryStore()) {
                 LOG.warning("The Tasks extension is on and tasks are kept in memory: they are lost when this server stops and other instances cannot see them. Provide a TaskStore bean (see the mcp-jakarta-tasks-jdbc module) for anything beyond a single instance.");
             } else {

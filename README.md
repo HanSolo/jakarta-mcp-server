@@ -31,6 +31,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 | `mcp-example-tickets` | A realistic example: a support-ticket service with a database, scopes and a confirmation step (see [The tickets example](#the-tickets-example)). Needs authentication |
 | `mcp-example-conformance` | A fixture WAR with the tools, prompts and resources the official conformance suite expects (see [Conformance suite](#conformance-suite)). A test aid, not an example to copy |
 | `mcp-example-apps` | The MCP Apps example: `show_clock` returns text and structured time and names a `ui://` page that supporting clients display (see [MCP Apps](#mcp-apps)) |
+| `mcp-example-tasks` | The Tasks example: `build_report` runs as a task with status messages, a question to the client and cancellation; includes `demo.sh` (see [Tasks](#tasks-experimental)) |
 | `mcp-it-fixture` | A test-only WAR: an **unauthenticated** admin endpoint (add and remove tools, announce changes, receive a change), a bridge that POSTs changes to peer instances, and a tool with a nested `oneOf` schema. Used by the integration tests; never deploy it |
 | `mcp-it` | Integration tests: starts the example WAR in a Payara Micro, WildFly or Open Liberty container with Testcontainers |
 
@@ -320,6 +321,7 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 | `mcp.tasks.max-result-bytes`, `mcp.tasks.max-running` | 1048576, 100 | Largest stored result (a bigger one fails the task) and most tasks one instance runs at once (503 above it) |
 | `mcp.tasks.executor` | `java:comp/DefaultManagedExecutorService`, then virtual threads | JNDI name of the executor that runs the work |
 | `mcp.tasks.heartbeat-ms`, `mcp.tasks.lease-ms`, `mcp.tasks.sweep-ms` | 10000, 30000, 30000 | Lease renewal, lease length and how often lost and expired tasks are looked for |
+| `mcp.tasks.notify-poll-ms` | 2000 | How often a `subscriptions/listen` stream that watches tasks looks in the store for changes made on other instances |
 | `mcp.tasks.input-poll-ms`, `mcp.tasks.input-timeout-ms` | 500, 3600000 | How often work that waits for input looks for the answer, and how long it waits at most |
 | `mcp.tasks.datasource` or `mcp.tasks.jdbc.url`, `.user`, `.password` | none | JDBC task store (module `mcp-jakarta-tasks-jdbc`): JNDI name of a `DataSource`, or a JDBC URL |
 | `mcp.tasks.jdbc.table`, `mcp.tasks.jdbc.create-schema` | `mcp_tasks`, false | Table name and whether to create the table at startup |
@@ -606,6 +608,8 @@ Limits to know about:
 
 ## Tasks (experimental)
 
+`mcp-example-tasks` is a runnable example (`build_report`, with a `demo.sh` that polls or listens).
+
 A long-running tool call can return a task id at once instead of blocking; the client polls `tasks/get` for the status and the result. This is the `io.modelcontextprotocol/tasks` extension. It is **off by default** (`mcp.tasks.enabled=true`); the specification text for it could not be read in full when this was written, so field names follow the SEP and the overview page, and the extension may still change.
 
 ```java
@@ -613,7 +617,7 @@ A long-running tool call can return a task id at once instead of blocking; the c
 public ToolResult report(ToolCall call) {
     return ToolResult.task(ctx -> {
         ctx.status("collecting data");                       // shown by tasks/get
-        JsonObject answers = ctx.ask(InputRequests.of("ok", Elicitation.form("Use last year's data?").bool("yes")));   // input_required until tasks/update
+        JsonObject answers = ctx.ask(InputRequests.of("ok", Elicitation.form("Use last year's data?").bool("yes", p -> p.required())));   // input_required until tasks/update
         if (ctx.isCancelled()) {
             throw new RequestCancelledException("stopped", null);   // ends the task as cancelled
         }
@@ -630,8 +634,9 @@ public ToolResult report(ToolCall call) {
 - **Stores:** the default `InMemoryTaskStore` is correct for one instance and loses everything at restart; the server logs a warning at startup. For several instances or restarts use a shared store: the `mcp-jakarta-tasks-jdbc` module, or your own `TaskStore` bean (create, find, compare-and-set `replace`, two sweep queries, delete). The server uses the one store whose `available()` is true; two available stores fail the deployment, none means the in-memory store.
 - **JDBC store:** add `eu.hansolo.mcp:mcp-jakarta-tasks-jdbc` to the application and set `mcp.tasks.datasource` to the JNDI name of a `DataSource` (production), or `mcp.tasks.jdbc.url` with `mcp.tasks.jdbc.user` and `mcp.tasks.jdbc.password` (a connection per operation, no pooling: tests and small setups; the driver must be in the application). One table, `mcp_tasks` (`mcp.tasks.jdbc.table`); create it with the statements of `JdbcTaskStore.ddl(table, "TEXT")` (PostgreSQL) or `"CLOB"` (H2), or set `mcp.tasks.jdbc.create-schema=true` (PostgreSQL and H2). It uses plain standard SQL, one statement per operation, compare-and-set as `UPDATE ... WHERE id = ? AND version_no = ?`. Run the same settings on every instance, and the same database.
 - **Instances:** any instance answers `tasks/get`, `tasks/update` and `tasks/cancel` from the shared store. Cancellation and answers reach the instance that runs the work within one heartbeat (cancel) or one `mcp.tasks.input-poll-ms` (input). An instance that dies leaves its tasks to be declared `failed` by another instance after `mcp.tasks.lease-ms`.
-- **Not done yet:** `notifications/tasks` on `subscriptions/listen` (clients poll), tasks for anything but `tools/call`, external job handles.
-- Tested with unit tests (engine with a controllable clock, wire behaviour), `JdbcTaskStoreTest` and `TwoInstancesTest` (two services over one H2 database; 10 tests passed on 2026-11-09), `TasksClusterIT` (two server containers and PostgreSQL; 4 tests passed on Payara, WildFly and Open Liberty on 2026-11-09 (17:46 run, after a first run exposed a sweeper that started too late)) and `TasksIT` (7 tests, passed on Payara, WildFly and Open Liberty on 2026-11-09, 17:10 run; all three found their container's managed executor or fell back without error).
+- **Notifications:** instead of polling `tasks/get`, a client can open `subscriptions/listen` with `notifications.taskIds` (it must have declared the extension, else -32021). The acknowledgement lists the ids the server honors (unknown, expired and foreign ids are left out; at most 50 per stream). The stream then sends `notifications/tasks` with the same content `tasks/get` would return at that moment (without `resultType`), first the current state and then on every change, and stops watching a task after it has sent a terminal state. Changes made on this instance are sent at once; the stream also looks in the task store every `mcp.tasks.notify-poll-ms` (default 2000), which is how a task that runs on another instance reaches it. Cost: one store lookup per watched task per interval. Clients may keep polling. `notifications/progress` and `notifications/message` are never sent for a task.
+- **Not done yet:** tasks for anything but `tools/call`, external job handles, restartable tasks.
+- Tested with unit tests (engine with a controllable clock, wire behaviour), `JdbcTaskStoreTest` and `TwoInstancesTest` (two services over one H2 database; 10 tests passed on 2026-11-09), `TasksClusterIT` (two server containers and PostgreSQL; 4 tests passed on Payara, WildFly and Open Liberty on 2026-11-09 (17:46 run, after a first run exposed a sweeper that started too late)) `TasksJndiIT` (JNDI `DataSource` on Payara with PostgreSQL; written, not yet run; skipped on WildFly and Liberty) and `TasksIT` (7 tests, passed on Payara, WildFly and Open Liberty on 2026-11-09, 17:10 run; all three found their container's managed executor or fell back without error).
 
 ## Trace context
 
@@ -733,7 +738,7 @@ docker run --rm -p 8080:8080 -e MCP_TASKS_ENABLED=true -v "$PWD/mcp-example-conf
 npx --yes @modelcontextprotocol/conformance@alpha server --url http://localhost:8080/mcp --requirements 2026-07-28 -o results > all.txt 2>&1
 ```
 
-The `docker run` line above sets `MCP_TASKS_ENABLED=true`, because the Tasks extension is off by default, and the nine `tasks-*` scenarios need it. With it, all scenarios pass on Payara (run of 2026-11-09; `tasks-status-notifications` runs no checks, because the suite has not rewritten it for `subscriptions/listen` yet, and this server sends no `notifications/tasks`). `mcp-example-conformance/expected-failures.yml` is empty; scenarios listed there are expected to fail, and the file can be passed with `--expected-failures` (it must then have at least one entry). The CI job `conformance` does exactly that and fails on any other failure, and also when a listed scenario starts to pass (then delete its entry). It uploads the results as an artifact.
+The `docker run` line above sets `MCP_TASKS_ENABLED=true`, because the Tasks extension is off by default, and the nine `tasks-*` scenarios need it. With it, all scenarios pass on Payara (run of 2026-11-09; `tasks-status-notifications` runs no checks, because the suite has not rewritten it for `subscriptions/listen` yet, and the scenario has not been run against the `notifications/tasks` this server now sends). `mcp-example-conformance/expected-failures.yml` is empty; scenarios listed there are expected to fail, and the file can be passed with `--expected-failures` (it must then have at least one entry). The CI job `conformance` does exactly that and fails on any other failure, and also when a listed scenario starts to pass (then delete its entry). It uploads the results as an artifact.
 
 ## Not implemented yet
 

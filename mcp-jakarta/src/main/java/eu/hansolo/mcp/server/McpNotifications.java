@@ -129,6 +129,11 @@ public class McpNotifications {
         return subscriptions.size();
     }
 
+    /** A task changed on this instance; streams that watch it look at it now instead of at their next poll. */
+    void taskChanged(String taskId) {
+        subscriptions.forEach(s -> s.taskChanged(taskId));
+    }
+
     /** For {@link McpRegistrations}: the registry is per instance, so the other instances are not told. */
     void toolsListChangedLocally() {
         subscriptions.forEach(Subscription::toolsListChanged);

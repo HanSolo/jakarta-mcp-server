@@ -140,4 +140,34 @@ class TasksIT {
         assertEquals(400, mismatch.status());
         assertEquals(-32020, mismatch.json().getJsonObject("error").getInt("code"));
     }
+
+    @Test
+    void aListenStreamPushesTheStateOfAWatchedTaskUntilItsResult() throws Exception {
+        String id = callDemo("quick", true).getString("taskId");
+        JsonObject filter = Json.createObjectBuilder().add("taskIds", Json.createArrayBuilder().add(id).add("no-such-task")).build();
+        JsonObject capabilities = Json.createObjectBuilder().add("extensions", Json.createObjectBuilder().add(TASKS, Json.createObjectBuilder())).build();
+        try (McpClient.Events events = client.openListen(91, filter, null, "application/json, text/event-stream", capabilities)) {
+            assertEquals(200, events.status());
+            JsonObject ack = events.nextWithin(java.time.Duration.ofSeconds(20)).json();
+            assertEquals("notifications/subscriptions/acknowledged", ack.getString("method"));
+            assertEquals(1, ack.getJsonObject("params").getJsonObject("notifications").getJsonArray("taskIds").size());
+            JsonObject params;
+            do {
+                JsonObject event = events.nextWithin(java.time.Duration.ofSeconds(20)).json();
+                assertEquals("notifications/tasks", event.getString("method"));
+                assertEquals(91, event.getJsonObject("params").getJsonObject("_meta").getInt("io.modelcontextprotocol/subscriptionId"));
+                params = event.getJsonObject("params");
+                assertEquals(id, params.getString("taskId"));
+            } while (!params.getString("status").equals("completed"));
+            assertEquals("finished quick", params.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+        }
+    }
+
+    @Test
+    void askingForTaskNotificationsWithoutTheExtensionIsRefused() throws Exception {
+        JsonObject filter = Json.createObjectBuilder().add("taskIds", Json.createArrayBuilder().add("abc")).build();
+        try (McpClient.Events events = client.openListen(92, filter, null, "application/json, text/event-stream")) {
+            assertEquals(400, events.status());
+        }
+    }
 }

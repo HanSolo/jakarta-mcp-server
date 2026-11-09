@@ -79,6 +79,7 @@ public class TaskService {
     private Executor                       executor;
     private ExecutorService                ownedExecutor;
     private ScheduledExecutorService       scheduler;
+    private final java.util.List<java.util.function.Consumer<String>> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
 
     @Inject
@@ -237,8 +238,12 @@ public class TaskService {
     /** The {@code tasks/get} result. */
     public JsonObject get(String taskId, Caller caller) {
         start();
-        TaskRecord rec = lookup(taskId, caller);
-        JsonObjectBuilder out = taskFields(rec).add("resultType", "complete");
+        return detail(lookup(taskId, caller)).add("resultType", "complete").build();
+    }
+
+    /** The task with the payload of its status (result, error or open input requests): what {@code tasks/get} and {@code notifications/tasks} carry. */
+    private JsonObjectBuilder detail(TaskRecord rec) {
+        JsonObjectBuilder out = taskFields(rec);
         switch (rec.status()) {
             case COMPLETED -> out.add("result", rec.result());
             case FAILED -> out.add("error", rec.error());
@@ -246,7 +251,52 @@ public class TaskService {
             default -> {
             }
         }
-        return out.build();
+        return out;
+    }
+
+    /**
+     * The state of a task as a {@code notifications/tasks} notification carries it.
+     *
+     * @param terminal true when the task will not change any more
+     * @param key      changes whenever the content changes, so a stream sends only what is new
+     * @param params   the notification parameters (task fields plus result, error or input requests)
+     */
+    public record TaskView(boolean terminal, int key, JsonObject params) {
+    }
+
+    /** How often a stream that watches tasks looks in the store. */
+    public long notifyPollMs() {
+        return config.notifyPollMs();
+    }
+
+    /** The current state of the task for a stream that watches it, or empty if the task is unknown, expired, foreign or not permitted. */
+    public Optional<TaskView> view(String taskId, Caller caller) {
+        TaskRecord rec;
+        try {
+            rec = lookup(taskId, caller);
+        } catch (McpProtocolException e) {
+            return Optional.empty();
+        }
+        JsonObject params = detail(rec).build();
+        return Optional.of(new TaskView(rec.status().isTerminal(), params.toString().hashCode(), params));
+    }
+
+    /**
+     * Registers a listener that is called with the id of every task this instance changes (state, message, input). Changes made by other
+     * instances do not reach it: a stream finds those by looking in the store.
+     */
+    public void onChange(java.util.function.Consumer<String> listener) {
+        listeners.add(java.util.Objects.requireNonNull(listener, "listener"));
+    }
+
+    private void changed(String id) {
+        for (java.util.function.Consumer<String> listener : listeners) {
+            try {
+                listener.accept(id);
+            } catch (RuntimeException e) {
+                LOG.log(Level.FINE, "A task change listener failed", e);
+            }
+        }
     }
 
     /** {@code tasks/update}: stores answers for open input requests; unknown and already answered keys are ignored. */
@@ -421,6 +471,7 @@ public class TaskService {
                 return found;
             }
             if (store.replace(found.get(), next)) {
+                changed(id);
                 return Optional.of(next);
             }
         }

@@ -284,12 +284,17 @@ final class McpClient {
 
     /** Opens a subscriptions/listen stream. The id of the request is the subscription id. */
     Events openListen(int id, JsonObject notificationFilter, String bearer, String accept) throws IOException, InterruptedException {
+        return openListen(id, notificationFilter, bearer, accept, Json.createObjectBuilder().build());
+    }
+
+    /** Like the above, with the capabilities the client declares (for example the Tasks extension). */
+    Events openListen(int id, JsonObject notificationFilter, String bearer, String accept, JsonObject capabilities) throws IOException, InterruptedException {
         Map<String, String> headers = standardHeaders("subscriptions/listen", null);
         headers.put("Accept", accept);
         if (bearer != null) {
             headers.put("Authorization", "Bearer " + bearer);
         }
-        JsonObject meta = Json.createObjectBuilder().add("io.modelcontextprotocol/protocolVersion", VERSION).add("io.modelcontextprotocol/clientCapabilities", Json.createObjectBuilder()).build();
+        JsonObject meta = Json.createObjectBuilder().add("io.modelcontextprotocol/protocolVersion", VERSION).add("io.modelcontextprotocol/clientCapabilities", capabilities).build();
         JsonObject params = Json.createObjectBuilder().add("notifications", notificationFilter).add("_meta", meta).build();
         String body = Json.createObjectBuilder().add("jsonrpc", "2.0").add("id", id).add("method", "subscriptions/listen").add("params", params).build().toString();
         HttpRequest.Builder request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(30)).POST(HttpRequest.BodyPublishers.ofString(body));

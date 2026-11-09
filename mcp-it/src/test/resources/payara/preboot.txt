@@ -1,0 +1,2 @@
+create-jdbc-connection-pool --datasourceclassname org.postgresql.ds.PGSimpleDataSource --restype javax.sql.DataSource --property serverName=postgres:portNumber=5432:databaseName=mcp:user=mcp:password=mcp mcpPool
+create-jdbc-resource --connectionpoolid mcpPool jdbc/mcp

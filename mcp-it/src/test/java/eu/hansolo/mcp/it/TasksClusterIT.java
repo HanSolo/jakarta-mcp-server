@@ -56,6 +56,7 @@ class TasksClusterIT {
         env.put("MCP_TASKS_LEASE_MS", "2000");
         env.put("MCP_TASKS_SWEEP_MS", "500");
         env.put("MCP_TASKS_INPUT_POLL_MS", "100");
+        env.put("MCP_TASKS_NOTIFY_POLL_MS", "200");
         int port = ServerFixture.httpPort();
         a = ServerFixture.create(ServerFixture.fixtureWar(), env, false).withNetwork(network).withNetworkAliases("mcp-a");
         b = ServerFixture.create(ServerFixture.fixtureWar(), env, false).withNetwork(network).withNetworkAliases("mcp-b");
@@ -151,6 +152,36 @@ class TasksClusterIT {
 
     @Test
     @Order(4)
+    void aStreamOnBHearsAboutATaskThatRunsOnA() throws Exception {
+        String id = startDemo(clientA, "ask");
+        JsonObject capabilities = Json.createObjectBuilder().add("extensions", Json.createObjectBuilder().add(TASKS, Json.createObjectBuilder())).build();
+        JsonObject filter = Json.createObjectBuilder().add("taskIds", Json.createArrayBuilder().add(id)).build();
+        try (McpClient.Events events = clientB.openListen(93, filter, null, "application/json, text/event-stream", capabilities)) {
+            assertEquals(200, events.status());
+            JsonObject ack = events.nextWithin(Duration.ofSeconds(20)).json();
+            assertEquals(1, ack.getJsonObject("params").getJsonObject("notifications").getJsonArray("taskIds").size());
+            JsonObject params = nextTaskEvent(events);
+            while (!params.getString("status").equals("input_required")) {
+                params = nextTaskEvent(events);
+            }
+            assertTrue(params.getJsonObject("inputRequests").containsKey("confirm"));
+            JsonObject answer = Json.createObjectBuilder().add("confirm", Json.createObjectBuilder().add("action", "accept").add("content", Json.createObjectBuilder().add("why", "heard on B"))).build();
+            assertEquals(200, rpc(clientB, "tasks/update", id, Json.createObjectBuilder().add("taskId", id).add("inputResponses", answer)).status());
+            while (!params.getString("status").equals("completed")) {
+                params = nextTaskEvent(events);
+            }
+            assertEquals("confirmed: heard on B", params.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+        }
+    }
+
+    private static JsonObject nextTaskEvent(McpClient.Events events) throws Exception {
+        JsonObject event = events.nextWithin(Duration.ofSeconds(30)).json();
+        assertEquals("notifications/tasks", event.getString("method"));
+        return event.getJsonObject("params");
+    }
+
+    @Test
+    @Order(5)
     void whenAIsKilledMidTaskBDeclaresTheTaskFailed() throws Exception {
         String id = startDemo(clientA, "wait");
         assertNotEquals("failed", get(clientB, id).getString("status"));

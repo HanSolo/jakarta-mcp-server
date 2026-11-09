@@ -3,6 +3,7 @@ package eu.hansolo.mcp.server;
 import jakarta.json.Json;
 import jakarta.json.JsonObjectBuilder;
 import jakarta.json.JsonValue;
+import eu.hansolo.mcp.api.Caller;
 import eu.hansolo.mcp.protocol.MetaKeys;
 
 import java.time.Instant;
@@ -33,7 +34,10 @@ final class Subscription {
     private final boolean     prompts;
     private final boolean     resources;
     private final Set<String> uris;
+    private final Set<String> taskIds;
+    private final Caller      caller;
 
+    private final Set<String> pendingTasks = new LinkedHashSet<>();
     private final Set<String> pendingUris = new LinkedHashSet<>();
     private boolean           pendingTools;
     private boolean           pendingPrompts;
@@ -51,6 +55,16 @@ final class Subscription {
      * @param uris      the resource URIs the server agreed to watch
      */
     Subscription(JsonValue id, String owner, Instant expiresAt, boolean tools, boolean prompts, boolean resources, Set<String> uris) {
+        this(id, owner, expiresAt, tools, prompts, resources, uris, Set.of(), null);
+    }
+
+    /**
+     * @param taskIds the tasks the server agreed to report on ({@code notifications/tasks}); they were checked against {@code caller}
+     * @param caller  who opened the stream; the tasks are looked up as this caller
+     */
+    Subscription(JsonValue id, String owner, Instant expiresAt, boolean tools, boolean prompts, boolean resources, Set<String> uris, Set<String> taskIds, Caller caller) {
+        this.taskIds   = Set.copyOf(taskIds);
+        this.caller    = caller;
         this.id        = id;
         this.owner     = owner;
         this.expiresAt = expiresAt;
@@ -73,6 +87,15 @@ final class Subscription {
         return expiresAt;
     }
 
+    /** The tasks this stream reports on. */
+    Set<String> taskIds() {
+        return taskIds;
+    }
+
+    Caller caller() {
+        return caller;
+    }
+
     /** The filter the server honors, as sent in the acknowledgement. */
     JsonObjectBuilder honoredFilter() {
         JsonObjectBuilder filter = Json.createObjectBuilder();
@@ -84,6 +107,11 @@ final class Subscription {
         }
         if (resources) {
             filter.add("resourcesListChanged", true);
+        }
+        if (!taskIds.isEmpty()) {
+            var watched = Json.createArrayBuilder();
+            taskIds.forEach(watched::add);
+            filter.add("taskIds", watched);
         }
         if (!uris.isEmpty()) {
             var watched = Json.createArrayBuilder();
@@ -124,6 +152,31 @@ final class Subscription {
                 pendingResources = true;
                 changed.signalAll();
             }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** A watched task changed on this instance: wakes the stream, which then looks at the task. */
+    void taskChanged(String taskId) {
+        lock.lock();
+        try {
+            if (!closed && taskIds.contains(taskId)) {
+                pendingTasks.add(taskId);
+                changed.signalAll();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** The watched tasks that changed locally since the last call. */
+    Set<String> takeChangedTasks() {
+        lock.lock();
+        try {
+            Set<String> out = new LinkedHashSet<>(pendingTasks);
+            pendingTasks.clear();
+            return out;
         } finally {
             lock.unlock();
         }
@@ -202,7 +255,7 @@ final class Subscription {
     }
 
     private boolean hasPending() {
-        return pendingTools || pendingPrompts || pendingResources || !pendingUris.isEmpty();
+        return pendingTools || pendingPrompts || pendingResources || !pendingUris.isEmpty() || !pendingTasks.isEmpty();
     }
 
     String acknowledgement() {
@@ -215,6 +268,12 @@ final class Subscription {
             params.add("uri", uri);
         }
         return notificationWith(method, params);
+    }
+
+    /** A {@code notifications/tasks} message; {@code params} is the task as {@code tasks/get} would return it. */
+    String taskNotification(jakarta.json.JsonObject taskParams) {
+        JsonObjectBuilder params = Json.createObjectBuilder(taskParams);
+        return notificationWith("notifications/tasks", params);
     }
 
     private String notificationWith(String method, JsonObjectBuilder params) {

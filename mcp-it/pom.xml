@@ -83,6 +83,13 @@
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers</artifactId>
         </dependency>
+        <!-- only to find the driver jar on disk: TasksJndiIT copies it to the application server, which needs it for the connection pool -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
+            <scope>test</scope>
+        </dependency>
         <!-- Makes Testcontainers explain itself (which Docker sockets it tried and why each failed). The 1.7.x line matches the SLF4J 1.x API seen on the test classpath; drop this once logging works. -->
         <dependency>
             <groupId>org.slf4j</groupId>

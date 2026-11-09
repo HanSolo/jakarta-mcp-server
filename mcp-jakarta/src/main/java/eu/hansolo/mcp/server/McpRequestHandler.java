@@ -800,10 +800,42 @@ public class McpRequestHandler {
                 }
             }
         }
+        Set<String> taskIds = listenTasks(filter, context);
         Instant expiresAt = authConfig.enabled() ? McpNotifications.expiry(context.caller().claims().get("exp")) : null;
-        Subscription subscription = notifications.open(new Subscription(id, context.caller().subject(), expiresAt, tools, prompts, resources, uris));
+        Subscription subscription = notifications.open(new Subscription(id, context.caller().subject(), expiresAt, tools, prompts, resources, uris, taskIds, context.caller()));
         McpHttpResponse.Streaming stream = sink -> runListen(subscription, sink);
         return config.listenAsync() ? McpHttpResponse.detached(stream) : McpHttpResponse.streaming(stream);
+    }
+
+    private static final int MAX_TASK_SUBSCRIPTIONS = 50;
+    private static final int MAX_TASK_ID            = 128;
+
+    /**
+     * The task ids of a listen request that the server will report on. A client that asks for task notifications must have declared
+     * the extension; ids that are unknown, expired or not the caller's are left out of the acknowledgement, like unreadable resources.
+     */
+    private Set<String> listenTasks(JsonObject filter, RequestContext context) {
+        JsonValue requested = filter.get("taskIds");
+        if (requested == null || requested == JsonValue.NULL) {
+            return Set.of();
+        }
+        if (!(requested instanceof JsonArray array)) {
+            throw McpProtocolException.malformedParams("taskIds must be an array of strings");
+        }
+        if (array.size() > MAX_TASK_SUBSCRIPTIONS) {
+            throw McpProtocolException.invalidArguments("At most " + MAX_TASK_SUBSCRIPTIONS + " task subscriptions per stream");
+        }
+        Extensions.require(context.clientCapabilities(), Tasks.EXTENSION_ID);
+        Set<String> honored = new java.util.LinkedHashSet<>();
+        for (JsonValue entry : array) {
+            if (!(entry instanceof JsonString taskId) || taskId.getString().length() > MAX_TASK_ID) {
+                throw McpProtocolException.malformedParams("taskIds must be an array of strings of at most " + MAX_TASK_ID + " characters");
+            }
+            if (tasks.enabled() && tasks.view(taskId.getString(), context.caller()).isPresent()) {
+                honored.add(taskId.getString());
+            }
+        }
+        return honored;
     }
 
     private static boolean flag(JsonObject filter, String name) {
@@ -825,8 +857,15 @@ public class McpRequestHandler {
     private void runListen(Subscription subscription, McpHttpResponse.EventSink sink) throws IOException {
         try {
             sink.send(subscription.acknowledgement());
+            Map<String, Integer> watched = new java.util.LinkedHashMap<>();   // task id -> key of the last state sent
+            subscription.taskIds().forEach(taskId -> watched.put(taskId, null));
+            sendTaskChanges(subscription, sink, watched, watched.keySet().stream().toList());
+            long lastWrite = System.nanoTime();
             while (!subscription.isClosed()) {
                 long wait = config.keepAliveMs();
+                if (!watched.isEmpty()) {
+                    wait = Math.min(wait, tasks.notifyPollMs());
+                }
                 if (subscription.expiresAt() != null) {
                     long untilExpiry = java.time.Duration.between(Instant.now(), subscription.expiresAt()).toMillis();
                     if (untilExpiry <= 0) {
@@ -841,11 +880,21 @@ public class McpRequestHandler {
                     Thread.currentThread().interrupt();
                     break;
                 }
+                int written = due.size();
                 for (String notification : due) {
                     sink.send(notification);
                 }
-                if (due.isEmpty() && !subscription.isClosed()) {
+                if (!watched.isEmpty()) {
+                    Set<String> local = subscription.takeChangedTasks();
+                    // woken by a local change: look at those tasks; otherwise the poll interval passed: look at all of them,
+                    // which is how a task that runs on another instance reaches this stream
+                    written += sendTaskChanges(subscription, sink, watched, local.isEmpty() ? watched.keySet().stream().toList() : local.stream().toList());
+                }
+                if (written > 0) {
+                    lastWrite = System.nanoTime();
+                } else if (!subscription.isClosed() && System.nanoTime() - lastWrite >= java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(config.keepAliveMs())) {
                     sink.comment("keep-alive");
+                    lastWrite = System.nanoTime();
                 }
             }
             try {
@@ -859,6 +908,36 @@ public class McpRequestHandler {
         } finally {
             notifications.remove(subscription);
         }
+    }
+
+    /**
+     * Sends {@code notifications/tasks} for the given watched tasks whose state differs from what was sent last. A task that is
+     * finished, or gone (expired), is not watched any more.
+     *
+     * @return how many notifications were written
+     */
+    private int sendTaskChanges(Subscription subscription, McpHttpResponse.EventSink sink, Map<String, Integer> watched, List<String> ids) throws IOException {
+        int written = 0;
+        for (String taskId : ids) {
+            if (!watched.containsKey(taskId)) {
+                continue;
+            }
+            var view = tasks.view(taskId, subscription.caller());
+            if (view.isEmpty()) {
+                watched.remove(taskId);
+                continue;
+            }
+            Integer last = watched.get(taskId);
+            if (last == null || last != view.get().key()) {
+                sink.send(subscription.taskNotification(view.get().params()));
+                written++;
+                watched.put(taskId, view.get().key());
+            }
+            if (view.get().terminal()) {
+                watched.remove(taskId);
+            }
+        }
+        return written;
     }
 
     private JsonObject tasksGet(RequestContext context) {
