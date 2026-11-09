@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-09)
 
 ### Added
 - **Tasks extension (`io.modelcontextprotocol/tasks`, experimental, off by default):** `ToolResult.task(TaskWork)` with `TaskContext` (`status`, `ask`, `isCancelled`), `tasks/get`, `tasks/update` and `tasks/cancel`, a `TaskStore` SPI with the default `InMemoryTaskStore`, ownership checks on every request, leases with heartbeat and a sweeper that declares tasks without a live worker failed, TTL expiry, result size and concurrency limits, inline fallback for clients that did not declare the extension. Settings `mcp.tasks.*`. `TasksIT` added. See "Tasks" in the README.

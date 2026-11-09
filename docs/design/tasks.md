@@ -1,6 +1,6 @@
 # Design note: Tasks extension (`io.modelcontextprotocol/tasks`), planned for 0.6.0
 
-Status: phase 1 (core, in-memory store) implemented in 0.6.0-SNAPSHOT; the decisions below are settled (see the end). Sources: [overview](https://modelcontextprotocol.io/extensions/tasks/overview.md) and [SEP-2663](https://modelcontextprotocol.io/seps/2663-tasks-extension) (Final, but "preserved as a historical record"; the normative text is in the `ext-tasks` repository, which could not be fetched when this note was written, so field names below are from the SEP).
+Status: implemented in 0.6.0 (core, in-memory and JDBC stores, notifications); the decisions below are settled (see the end). Sources: [overview](https://modelcontextprotocol.io/extensions/tasks/overview.md) and [SEP-2663](https://modelcontextprotocol.io/seps/2663-tasks-extension) (Final, but "preserved as a historical record"; the normative text is in the `ext-tasks` repository, which could not be fetched when this note was written, so field names below are from the SEP).
 
 ## What the specification asks of a server
 
