@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`scripts/release-check.sh` and a CI job `release-check`:** build the publishable modules with the release profile (sources and Javadoc jars, no signing, no upload), so a Javadoc error fails in CI instead of at the Central upload.
+
+### Changed
+- Dependency and plugin updates: parsson 1.1.9, PostgreSQL driver 42.7.14, Testcontainers 2.0.5, compiler 3.16.0, surefire/failsafe 3.6.1, resources 3.5.0, jar 3.5.1, war 3.5.1, source 3.4.0, javadoc 3.12.0, gpg 3.2.8, central-publishing 0.12.0. Not taken yet: JUnit 6 (major), H2 2.5, slf4j-simple 2.1 alpha.
+
+### Fixed
+- Javadoc of `McpRequestHandler.handle` named a parameter `headers` after it was renamed `rawHeaders`; the 0.6.0 release build failed on it (the fix is in the 0.6.0 tag).
+
 ## 0.6.0 (2026-11-09)
 
 ### Added

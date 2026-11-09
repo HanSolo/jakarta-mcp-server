@@ -293,7 +293,7 @@ Not covered: the browser-based authorization-code flow and dynamic client regist
 For maintainers. Uses the Central Portal; the namespace `eu.hansolo` must be verified for your account.
 
 1. A server `central` in `~/.m2/settings.xml` holding a portal user token, and a GPG key whose public half is on a keyserver.
-2. Set a release version (`mvn versions:set -DnewVersion=<version> -DgenerateBackupPoms=false`), commit, tag.
+2. Run `scripts/release-check.sh` (sources and Javadoc jars without signing; a Javadoc error fails the build, which the real upload would also do). Then set a release version (`mvn versions:set -DnewVersion=<version> -DgenerateBackupPoms=false`), commit, tag.
 3. `mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc` signs and uploads the parent POM, `mcp-jakarta` and `mcp-jakarta-tasks-jdbc` (jar, sources, Javadoc). The `-pl` matters: the plugin bundles every module that is part of the build, so without it the example WARs and `mcp-it` would be uploaded too.
 4. The bundle is validated but not published: open the portal, check it and press Publish. Releases cannot be deleted afterwards. Set `autoPublish` to `true` in the root `pom.xml` to skip this step.
 5. Set the next `-SNAPSHOT` version.

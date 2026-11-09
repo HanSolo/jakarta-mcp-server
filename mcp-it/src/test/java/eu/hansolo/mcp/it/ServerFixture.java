@@ -117,14 +117,15 @@ final class ServerFixture {
         return Path.of(System.getProperty("mcp.fixture.war", "../mcp-it-fixture/target/mcp-it-fixture.war"));
     }
 
-    /** Polls the endpoint until the application answers (200, or 401 when authentication is on), because the port opens before deployment finishes. */
+    /** Polls the endpoint until the application answers (a JSON 200, or 401 when authentication is on), because the port opens before deployment finishes. */
     static void awaitDeployed(GenericContainer<?> container, McpClient client) {
         Instant deadline = Instant.now().plus(Duration.ofSeconds(180));
         String last = "no response";
         while (Instant.now().isBefore(deadline)) {
             try {
                 McpClient.Reply reply = client.discover(null);
-                if (reply.status() == 200 || reply.status() == 401) {
+                // WildFly answers 200 with its HTML welcome page until the WAR is deployed, so a 200 only counts when the body is JSON
+                if (reply.status() == 401 || reply.status() == 200 && reply.body() != null && reply.body().stripLeading().startsWith("{")) {
                     return;
                 }
                 last = "HTTP " + reply.status() + " " + reply.body();
