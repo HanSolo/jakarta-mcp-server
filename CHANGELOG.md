@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Tasks extension (`io.modelcontextprotocol/tasks`, experimental, off by default):** `ToolResult.task(TaskWork)` with `TaskContext` (`status`, `ask`, `isCancelled`), `tasks/get`, `tasks/update` and `tasks/cancel`, a `TaskStore` SPI with the default `InMemoryTaskStore`, ownership checks on every request, leases with heartbeat and a sweeper that declares tasks without a live worker failed, TTL expiry, result size and concurrency limits, inline fallback for clients that did not declare the extension. Settings `mcp.tasks.*`. `TasksIT` added. See "Tasks" in the README.
+- **`mcp-jakarta-tasks-jdbc`:** `JdbcTaskStore`, a `TaskStore` in a relational database (JNDI `DataSource` or JDBC URL), so several instances share tasks and they survive a restart. `TaskStore.available()` lets a store module sit unused in an application. Tests: `JdbcTaskStoreTest`, `TwoInstancesTest` (H2) and `TasksClusterIT` (two servers, PostgreSQL).
+- **Conformance:** the nine `tasks-*` scenarios pass on Payara (run with `MCP_TASKS_ENABLED=true`); `expected-failures.yml` is empty, the fixture WAR has the Tasks tools, and `scripts/it.sh` and CI start the conformance container with tasks on.
+- **`McpToolHandler.taskSupport()`** (`TaskSupport.FORBIDDEN/OPTIONAL/REQUIRED`): announced as `execution.taskSupport` in `tools/list`. `REQUIRED` makes a call from a client without the Tasks extension (or with tasks off) fail with -32021 instead of running inline.
+- **Fixed: request headers keep no blanks around their values.** Open Liberty passes a trailing blank on to the application (`Mcp-Name: "  name  "` arrived as `name  `), so the conformance check `sep-2243-server-accepts-whitespace-header-value` failed there (Payara and WildFly trim both ends). The server now removes spaces and tabs around every header value it reads, as RFC 9110 5.5 requires.
+
 ## 0.5.0 (2026-11-09)
 
 ### Added

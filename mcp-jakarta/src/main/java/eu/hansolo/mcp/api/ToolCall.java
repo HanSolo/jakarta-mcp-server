@@ -81,6 +81,11 @@ public record ToolCall(String name, JsonObject arguments, JsonObject clientCapab
         return Apps.clientSupports(clientCapabilities);
     }
 
+    /** True if the client declared the Tasks extension, so {@link ToolResult#task} gives it a task id instead of the finished result. */
+    public boolean clientSupportsTasks() {
+        return Tasks.clientSupports(clientCapabilities);
+    }
+
     /** Refuses the request (error -32021) unless the client declared this extension. For extensions that are mandatory for this operation. */
     public void requireClientExtension(String id) {
         Extensions.require(clientCapabilities, id);

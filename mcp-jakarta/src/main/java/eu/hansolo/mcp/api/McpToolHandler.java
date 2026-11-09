@@ -39,6 +39,14 @@ public interface McpToolHandler {
         return null;
     }
 
+    /**
+     * Whether this tool may run as a task (see {@link TaskSupport}), or null to announce nothing. Announced as
+     * {@code execution.taskSupport}; {@link TaskSupport#REQUIRED} is also enforced.
+     */
+    default TaskSupport taskSupport() {
+        return null;
+    }
+
     /** Icons clients may show next to the name, or an empty list. */
     default List<Icon> icons() {
         return List.of();

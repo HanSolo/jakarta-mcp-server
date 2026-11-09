@@ -14,6 +14,22 @@ final class HeaderValues {
     }
 
 
+    /** Removes the optional whitespace (space and horizontal tab, RFC 9110 5.6.3) around a field value; null stays null. */
+    static String trimOws(String value) {
+        if (value == null) {
+            return null;
+        }
+        int start = 0;
+        int end   = value.length();
+        while (start < end && (value.charAt(start) == ' ' || value.charAt(start) == '\t')) {
+            start++;
+        }
+        while (end > start && (value.charAt(end - 1) == ' ' || value.charAt(end - 1) == '\t')) {
+            end--;
+        }
+        return value.substring(start, end);
+    }
+
     /**
      * Returns the decoded value.
      *

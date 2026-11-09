@@ -2,7 +2,12 @@ package eu.hansolo.mcp.conformance;
 
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
+import eu.hansolo.mcp.api.Elicitation;
+import eu.hansolo.mcp.api.InputRequests;
 import eu.hansolo.mcp.api.McpToolHandler;
+import eu.hansolo.mcp.api.RequestCancelledException;
+import eu.hansolo.mcp.api.TaskContext;
+import eu.hansolo.mcp.api.TaskSupport;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.protocol.McpProtocolException;
@@ -48,9 +53,9 @@ public final class ConformanceTools {
     /** All tools by name, in registration order. */
     public Map<String, McpToolHandler> all() {
         List<FixtureTool> tools = new ArrayList<>();
-        // Sorts before every other tool name. Some checks call the first listed tool with no arguments; json_schema_2020_12_tool would
+        // Sorts before every other tool name (hence the prefix: confirm_delete, a Tasks tool, would come first otherwise). Some checks call the first listed tool with no arguments; json_schema_2020_12_tool would
         // come first otherwise, and its schema (rightly) rejects an empty call now that arguments are validated against the schema.
-        tools.add(new FixtureTool("conformance_ping", "Takes no arguments.", c -> ToolResult.text("pong")));
+        tools.add(new FixtureTool("a_conformance_ping", "Takes no arguments.", c -> ToolResult.text("pong")));
         tools.add(new FixtureTool("test_simple_text", "Returns a simple text block.", c -> ToolResult.text("This is a simple text response for testing.")));
         tools.add(new FixtureTool("test_image_content", "Returns an image block.", c -> Content.blocks(Content.image())));
         tools.add(new FixtureTool("test_audio_content", "Returns an audio block.", c -> Content.blocks(Content.audio())));
@@ -81,11 +86,78 @@ public final class ConformanceTools {
         tools.add(new FixtureTool("test_input_required_result_tampered_state", "Refuses a request state that was altered.", this::tamperedState));
         tools.add(new FixtureTool("test_input_required_result_capabilities", "Asks only for what the client declared it supports.", this::capabilities));
 
+        // The Tasks scenarios (SEP-2663). The names come from the checks' failure messages; the arguments and the exact behaviour are inferred
+        // from the check descriptions, so the schemas accept any argument. The tasks run only when the server has mcp.tasks.enabled=true.
+        tools.add(new FixtureTool("greet", "A plain synchronous tool.", ANY_ARGUMENTS, c -> ToolResult.text("Hello, " + c.stringArgument("name").orElse("World") + "!")));
+        tools.add(new FixtureTool("slow_compute", "Runs as a task for about a second and a half; stops when cancelled.", ANY_ARGUMENTS, TaskSupport.OPTIONAL,
+                c -> ToolResult.task(ctx -> slowCompute(ctx, c))));
+        tools.add(new FixtureTool("failing_job", "Always runs as a task; the tool ends with an error result (completed + isError).", ANY_ARGUMENTS, TaskSupport.REQUIRED,
+                c -> ToolResult.task(ctx -> {
+                    pause(ctx, 300);
+                    return ToolResult.error("failing_job failed on purpose");
+                })));
+        tools.add(new FixtureTool("protocol_error_job", "Runs as a task that ends with a protocol-level error (failed).", ANY_ARGUMENTS, TaskSupport.OPTIONAL,
+                c -> ToolResult.task(ctx -> {
+                    pause(ctx, 300);
+                    throw McpProtocolException.internal("protocol_error_job failed on purpose");
+                })));
+        tools.add(new FixtureTool("confirm_delete", "Runs as a task that asks the client to confirm before it continues.", ANY_ARGUMENTS, TaskSupport.OPTIONAL,
+                c -> ToolResult.task(ctx -> {
+                    JsonObject answers = ctx.ask(InputRequests.of("confirm", Elicitation.form("Delete the item?").bool("confirm", p -> p.required())));
+                    return ToolResult.text("confirm_delete received " + answers.keySet());
+                })));
+        tools.add(new FixtureTool("multi_input", "Runs as a task that asks for two inputs at once.", ANY_ARGUMENTS, TaskSupport.OPTIONAL,
+                c -> ToolResult.task(ctx -> {
+                    JsonObject answers = ctx.ask(InputRequests.of("first", Elicitation.form("First value?").string("value", p -> p.required()))
+                            .add("second", Elicitation.form("Second value?").string("value", p -> p.required())));
+                    return ToolResult.text("multi_input received " + answers.keySet());
+                })));
+        tools.add(new FixtureTool("test_tool_with_task", "Gathers input in the request, then continues as a task.", ANY_ARGUMENTS, TaskSupport.OPTIONAL, this::inputThenTask));
+
         Map<String, McpToolHandler> byName = new LinkedHashMap<>();
         tools.forEach(t -> byName.put(t.name(), t));
         return byName;
     }
 
+
+    /** Accepts any arguments (the task scenarios send arguments the fixture cannot know). */
+    private static final JsonObject ANY_ARGUMENTS = Json.createObjectBuilder().add("type", "object").build();
+
+    private ToolResult slowCompute(TaskContext ctx, ToolCall call) throws InterruptedException {
+        long millis = 1_500;
+        for (String key : new String[] { "durationMs", "delayMs", "duration_ms", "delay_ms", "milliseconds", "ms" }) {
+            if (call.arguments().containsKey(key) && call.arguments().get(key) instanceof jakarta.json.JsonNumber n) {
+                millis = Math.max(0, Math.min(n.longValue(), 30_000));
+                break;
+            }
+        }
+        pause(ctx, millis);
+        return ToolResult.text("slow_compute finished");
+    }
+
+    /** Sleeps in short steps and gives up when the task is cancelled. */
+    private static void pause(TaskContext ctx, long millis) throws InterruptedException {
+        long end = System.currentTimeMillis() + millis;
+        while (System.currentTimeMillis() < end) {
+            if (ctx.isCancelled()) {
+                throw new RequestCancelledException("The task was cancelled", null);
+            }
+            Thread.sleep(Math.min(50, Math.max(1, end - System.currentTimeMillis())));
+        }
+    }
+
+    /** Asks for a name in the request (like the elicitation fixture), then continues as a task whose result carries that name. */
+    private ToolResult inputThenTask(ToolCall call) {
+        var name = Requests.acceptedString(call.inputResponses(), "user_name", "name");
+        if (name.isEmpty()) {
+            return ToolResult.inputRequired(Requests.requests("user_name", Requests.elicit("What is your name?", "name", "string")), null);
+        }
+        String who = name.get();
+        return ToolResult.task(ctx -> {
+            pause(ctx, 300);
+            return ToolResult.text("Hello, " + who + "! (test_tool_with_task finished)");
+        });
+    }
 
     private ToolResult withProgress(ToolCall call) throws InterruptedException {
         for (int step : new int[]{0, 50, 100}) {

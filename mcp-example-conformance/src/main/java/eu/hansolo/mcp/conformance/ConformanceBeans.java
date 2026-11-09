@@ -40,7 +40,42 @@ public class ConformanceBeans {
 
     @Produces
     McpToolHandler conformancePingTool() {
-        return tools.get("conformance_ping");
+        return tools.get("a_conformance_ping");
+    }
+
+    @Produces
+    McpToolHandler greetTool() {
+        return tools.get("greet");
+    }
+
+    @Produces
+    McpToolHandler slowComputeTool() {
+        return tools.get("slow_compute");
+    }
+
+    @Produces
+    McpToolHandler failingJobTool() {
+        return tools.get("failing_job");
+    }
+
+    @Produces
+    McpToolHandler protocolErrorJobTool() {
+        return tools.get("protocol_error_job");
+    }
+
+    @Produces
+    McpToolHandler confirmDeleteTool() {
+        return tools.get("confirm_delete");
+    }
+
+    @Produces
+    McpToolHandler multiInputTool() {
+        return tools.get("multi_input");
+    }
+
+    @Produces
+    McpToolHandler testToolWithTaskTool() {
+        return tools.get("test_tool_with_task");
     }
 
     @Produces

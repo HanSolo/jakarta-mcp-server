@@ -3,6 +3,7 @@ package eu.hansolo.mcp.conformance;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import eu.hansolo.mcp.api.McpToolHandler;
+import eu.hansolo.mcp.api.TaskSupport;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
 
@@ -21,6 +22,7 @@ final class FixtureTool implements McpToolHandler {
     private final String     description;
     private final JsonObject schema;
     private final Body       body;
+    private final TaskSupport taskSupport;
 
 
     FixtureTool(String name, String description, Body body) {
@@ -28,6 +30,11 @@ final class FixtureTool implements McpToolHandler {
     }
 
     FixtureTool(String name, String description, JsonObject schema, Body body) {
+        this(name, description, schema, null, body);
+    }
+
+    FixtureTool(String name, String description, JsonObject schema, TaskSupport taskSupport, Body body) {
+        this.taskSupport = taskSupport;
         this.name        = name;
         this.description = description;
         this.schema      = schema;
@@ -43,6 +50,11 @@ final class FixtureTool implements McpToolHandler {
     @Override
     public String description() {
         return description;
+    }
+
+    @Override
+    public TaskSupport taskSupport() {
+        return taskSupport;
     }
 
     @Override

@@ -58,7 +58,7 @@ class ConformanceFixturesTest {
         JsonObject listed = send(handler, "tools/list", Json.createObjectBuilder().build(), null);
         JsonObject first = listed.getJsonArray("tools").getJsonObject(0);
         assertEquals(tools.size(), listed.getJsonArray("tools").size());
-        assertEquals("conformance_ping", first.getString("name"));
+        assertEquals("a_conformance_ping", first.getString("name"));
         JsonObject call = Json.createObjectBuilder().add("name", first.getString("name")).add("arguments", Json.createObjectBuilder()).build();
         assertEquals("complete", send(handler, "tools/call", call, first.getString("name")).getString("resultType"));
     }

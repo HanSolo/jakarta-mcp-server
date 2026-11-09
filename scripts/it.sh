@@ -12,6 +12,8 @@
 #   scripts/it.sh --no-pull                       do not pull the container images first
 #   scripts/it.sh --conformance                   after the integration tests, run the MCP conformance suite against each server
 #   scripts/it.sh --only-conformance              the conformance suite only (no integration tests)
+#   scripts/it.sh --conformance-tasks             the conformance suite only, without expected-failures.yml (the Tasks extension is on in every conformance run),
+#                                                 without expected-failures.yml, so every tasks-* scenario shows its real result
 #   scripts/it.sh -- -Dmcp.image=payara/micro:7   everything after -- goes to Maven (for every server)
 #
 # The conformance suite (npx @modelcontextprotocol/conformance@alpha, needs Node 22+) runs against the mcp-example-conformance WAR on the
@@ -37,6 +39,7 @@ SERVERS="payara,wildfly,liberty"
 PULL=1
 RUN_IT=1
 RUN_CONFORMANCE=0
+CONFORMANCE_TASKS=0
 MVN_EXTRA=()
 
 usage() {
@@ -47,6 +50,8 @@ Usage:
   scripts/it.sh --no-pull                       do not pull the container images first
   scripts/it.sh --conformance                   after the integration tests, run the MCP conformance suite against each server
   scripts/it.sh --only-conformance              the conformance suite only (no integration tests)
+  scripts/it.sh --conformance-tasks             the conformance suite only, without expected-failures.yml (the Tasks extension is on in every conformance run) and
+                                                without expected-failures.yml, so every tasks-* scenario shows its real result
   scripts/it.sh -- -Dmcp.image=payara/micro:7   everything after -- goes to Maven (for every server)
 
 Run it from a checkout of the version you want to test. Logs and a summary go to it-logs/<timestamp>/.
@@ -96,6 +101,7 @@ while [ $# -gt 0 ]; do
         --no-pull)  PULL=0; shift ;;
         --conformance)      RUN_CONFORMANCE=1; shift ;;
         --only-conformance) RUN_CONFORMANCE=1; RUN_IT=0; shift ;;
+        --conformance-tasks) RUN_CONFORMANCE=1; RUN_IT=0; CONFORMANCE_TASKS=1; shift ;;
         -h|--help)  usage; exit 0 ;;
         --)         shift; MVN_EXTRA=("$@"); break ;;
         *)          usage >&2; die "unknown option: $1" ;;
@@ -299,7 +305,9 @@ conformance() {
         CONFORMANCE_BUILT=1
     fi
 
-    container=$(docker create -p "127.0.0.1::$port" "$image" 2>/dev/null) || {
+    TASKS_ENV=()
+    TASKS_ENV=(-e MCP_TASKS_ENABLED=true)
+    container=$(docker create -p "127.0.0.1::$port" ${TASKS_ENV[@]+"${TASKS_ENV[@]}"} "$image" 2>/dev/null) || {
         printf '  %-8s %-24s %s\n' "$server" "conformance" "FAILED: could not create a container from $image"
         OVERALL=1
         return
@@ -328,10 +336,21 @@ conformance() {
     else
         say "conformance suite against $server at $url (log: conformance-$server.log)" >&2
         rm -rf "$LOGDIR/conformance-$server-results"
-        npx --yes @modelcontextprotocol/conformance@alpha server --url "$url" --requirements 2026-07-28 --expected-failures "$ROOT/mcp-example-conformance/expected-failures.yml" -o "$LOGDIR/conformance-$server-results" 2>&1 | tee "$log" >&2
+        EXPECTED=()
+        # A file without a single entry is not passed: the suite may not accept an empty list.
+        grep -Eq '^[[:space:]]*-[[:space:]]' "$ROOT/mcp-example-conformance/expected-failures.yml" && EXPECTED=(--expected-failures "$ROOT/mcp-example-conformance/expected-failures.yml")
+        [ "$CONFORMANCE_TASKS" -eq 1 ] && EXPECTED=()
+        npx --yes @modelcontextprotocol/conformance@alpha server --url "$url" --requirements 2026-07-28 ${EXPECTED[@]+"${EXPECTED[@]}"} -o "$LOGDIR/conformance-$server-results" 2>&1 | tee "$log" >&2
         status=${PIPESTATUS[0]}
-        if [ "$status" -eq 0 ]; then
-            printf '  %-8s %-24s %s\n' "$server" "conformance" "passed (exit 0 with the expected failures)"
+        if [ "$CONFORMANCE_TASKS" -eq 1 ]; then
+            # No expected-failures file: the exit code says nothing, so report what the suite itself counted.
+            printf '  %-8s %-24s %s\n' "$server" "conformance (tasks on)" "INFORMATION ONLY, exit $status; $(grep -E '^Total:' "$log" | tail -1); failing scenarios: $(grep -E '^✗ ' "$log" | sed -E 's/^✗ ([^:]+):.*/\1/' | tr '\n' ' ')"
+        elif [ "$status" -eq 0 ] && grep -Eq '^Total: [0-9]+ passed, 0 failed' "$log"; then
+            printf '  %-8s %-24s %s\n' "$server" "conformance" "passed ($(grep -E '^Total:' "$log" | tail -1))"
+        elif [ "$status" -eq 0 ]; then
+            # The suite exits 0 when only unscored ("pending" or extension) scenarios fail. That is still a failure we want to see.
+            printf '  %-8s %-24s %s\n' "$server" "conformance" "FAILED CHECKS IN UNSCORED SCENARIOS (exit 0, but $(grep -E '^Total:' "$log" | tail -1)); failing: $(grep -E '^✗ ' "$log" | sed -E 's/^✗ ([^:]+):.*/\1/' | tr '\n' ' ')"
+            OVERALL=1
         else
             printf '  %-8s %-24s %s\n' "$server" "conformance" "FAILED (exit $status): a scenario failed that is not listed, or a listed one passes now; see conformance-$server.log"
             OVERALL=1

@@ -1,6 +1,6 @@
 # Design note: Tasks extension (`io.modelcontextprotocol/tasks`), planned for 0.6.0
 
-Status: proposal, nothing implemented. Sources: [overview](https://modelcontextprotocol.io/extensions/tasks/overview.md) and [SEP-2663](https://modelcontextprotocol.io/seps/2663-tasks-extension) (Final, but "preserved as a historical record"; the normative text is in the `ext-tasks` repository, which could not be fetched when this note was written, so field names below are from the SEP).
+Status: phase 1 (core, in-memory store) implemented in 0.6.0-SNAPSHOT; the decisions below are settled (see the end). Sources: [overview](https://modelcontextprotocol.io/extensions/tasks/overview.md) and [SEP-2663](https://modelcontextprotocol.io/seps/2663-tasks-extension) (Final, but "preserved as a historical record"; the normative text is in the `ext-tasks` repository, which could not be fetched when this note was written, so field names below are from the SEP).
 
 ## What the specification asks of a server
 
@@ -107,3 +107,13 @@ Implementations:
 - The normative `ext-tasks` text was not read; the SEP is marked as a historical record. Field names may have moved.
 - The 9 `tasks-*` conformance scenarios are listed in `expected-failures.yml`. Implementing the extension will probably flip some of them, and their fixture requirements are unknown (the same situation as `test_custom_header`).
 - Compare-and-set on `version` is simple; heartbeat, lease expiry and the sweeper are where the bugs will be. They need tests with a controllable clock before any IT.
+
+## Decisions taken (2026-11-09)
+
+1. The JDBC store goes in a separate module (`mcp-jakarta-tasks-jdbc`).
+2. Clients that did not declare the extension get the plain result (inline fallback).
+3. The work runs on a managed executor when one is found, else on virtual threads. The lookup order is `mcp.tasks.executor`, then `java:comp/DefaultManagedExecutorService`, then virtual threads.
+4. A task whose worker is lost is marked `failed` (`cancelled` if cancellation was pending). No restart.
+5. 0.6.0 is held until the JDBC store and the two-instance integration test pass.
+
+Differences between this note and the code: the store SPI is `create` / `find` / `replace` (compare and set on `version`) / `leaseExpired` / `expired` / `delete`, and the owner check lives in `TaskService`, not in the store; an expired task is deleted (not first marked failed); `ToolResult.task(...)` carries `ttlMs`, `noExpiry` and `pollIntervalMs` as options.

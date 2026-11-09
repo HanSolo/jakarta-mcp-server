@@ -6,7 +6,7 @@ import jakarta.json.JsonObject;
 import jakarta.json.JsonValue;
 
 /** The outcome of a tool call: either a final result or a request for more input from the client. */
-public sealed interface ToolResult permits ToolResult.Complete, ToolResult.InputRequired {
+public sealed interface ToolResult permits ToolResult.Complete, ToolResult.InputRequired, ToolResult.Task {
 
     /**
      * A final result.
@@ -46,6 +46,44 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
         }
     }
 
+    /**
+     * Run the work as a task (Tasks extension): the client gets a task id at once and polls for the result. A client that did not
+     * declare the extension gets the plain result instead, because the server runs the work on the request thread. Needs
+     * {@code mcp.tasks.enabled}; without it the work always runs inline.
+     *
+     * @param work       what to run; see {@link TaskWork}
+     * @param ttlMs      how long the task is kept, counted from its creation, or null for the server default
+     * @param noExpiry   true to keep the task without limit (then {@code ttlMs} must be null)
+     * @param pollIntervalMs suggested polling interval, or null for the server default
+     */
+    record Task(TaskWork work, Long ttlMs, boolean noExpiry, Long pollIntervalMs) implements ToolResult {
+
+        public Task {
+            if (work == null) {
+                throw new IllegalArgumentException("A task needs work to run");
+            }
+            if (ttlMs != null && (noExpiry || ttlMs <= 0)) {
+                throw new IllegalArgumentException("ttlMs must be positive and cannot be combined with noExpiry");
+            }
+            if (pollIntervalMs != null && pollIntervalMs <= 0) {
+                throw new IllegalArgumentException("pollIntervalMs must be positive");
+            }
+        }
+
+        public Task withTtlMs(long ttlMs) {
+            return new Task(work, ttlMs, false, pollIntervalMs);
+        }
+
+        /** Keep the task until the server's store drops it for other reasons. */
+        public Task withoutExpiry() {
+            return new Task(work, null, true, pollIntervalMs);
+        }
+
+        public Task withPollIntervalMs(long pollIntervalMs) {
+            return new Task(work, ttlMs, noExpiry, pollIntervalMs);
+        }
+    }
+
     static ToolResult text(String text) {
         return new Complete(Json.createArrayBuilder().add(textBlock(text)).build(), null, false);
     }
@@ -77,6 +115,11 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
     /** Asks the client for input ({@link Elicitation}) and has it retry the call with the answers. {@code requestState} may be null; if it is not, sign it ({@link eu.hansolo.mcp.server.McpRequestStates}). */
     static ToolResult ask(InputRequests requests, String requestState) {
         return new InputRequired(requests.toJson(), requestState);
+    }
+
+    /** Runs the work as a task for clients that support the extension, inline for the others. */
+    static Task task(TaskWork work) {
+        return new Task(work, null, false, null);
     }
 
     private static JsonObject textBlock(String text) {

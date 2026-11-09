@@ -34,6 +34,9 @@ import eu.hansolo.mcp.api.Scopes;
 import eu.hansolo.mcp.auth.AuthConfig;
 import eu.hansolo.mcp.auth.McpAuthenticator;
 import eu.hansolo.mcp.auth.TokenException;
+import eu.hansolo.mcp.api.Extensions;
+import eu.hansolo.mcp.api.TaskSupport;
+import eu.hansolo.mcp.api.Tasks;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.api.TraceContext;
@@ -82,16 +85,23 @@ public class McpRequestHandler {
     private final McpAuthenticator authenticator;
     private final McpNotifications notifications;
     private final McpExtensions    extensions;
+    private final TaskService      tasks;
 
 
     @Inject
-    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications, McpExtensions extensions) {
+    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications, McpExtensions extensions, TaskService tasks) {
         this.registry      = registry;
         this.config        = config;
         this.authConfig    = authConfig;
         this.authenticator = authenticator;
         this.notifications = notifications;
         this.extensions    = extensions;
+        this.tasks         = tasks;
+    }
+
+    /** A handler without the Tasks extension: a tool that returns {@code ToolResult.task(...)} runs inline. */
+    public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications, McpExtensions extensions) {
+        this(registry, config, authConfig, authenticator, notifications, extensions, TaskService.disabled(registry));
     }
 
     /** A handler that announces no extensions. */
@@ -120,7 +130,9 @@ public class McpRequestHandler {
      *         fail before the tool runs (origin, authentication, headers, scopes, arguments) is still answered as an ordinary JSON
      *         error with its own HTTP status, because the status cannot change once streaming has begun.
      */
-    public McpHttpResponse handle(Function<String, String> headers, InputStream body) {
+    public McpHttpResponse handle(Function<String, String> rawHeaders, InputStream body) {
+        // RFC 9110 5.5: whitespace around a field value is not part of the value. Servers differ (Open Liberty keeps trailing blanks).
+        Function<String, String> headers = name -> HeaderValues.trimOws(rawHeaders.apply(name));
         JsonValue id = null;
         try {
             if (!config.isOriginAllowed(headers.apply("Origin"))) {
@@ -232,6 +244,9 @@ public class McpRequestHandler {
         if (method.startsWith("prompts/") && !registry.hasPrompts() || method.startsWith("resources/") && !registry.hasResources() || method.equals("completion/complete") && !registry.hasCompletions()) {
             throw McpProtocolException.methodNotFound(method);
         }
+        if (method.startsWith("tasks/") && !tasks.enabled()) {
+            throw McpProtocolException.methodNotFound(method);
+        }
         if ((method.startsWith("skills/") || method.equals("resources/directory/read")) && !registry.hasSkills()) {
             throw McpProtocolException.methodNotFound(method);
         }
@@ -253,6 +268,9 @@ public class McpRequestHandler {
             case "skills/list" -> skillsList(context);
             case "skills/get" -> skillsGet(context);
             case "resources/directory/read" -> directoryRead(context);
+            case "tasks/get" -> tasksGet(context);
+            case "tasks/update" -> tasksUpdate(context);
+            case "tasks/cancel" -> tasksCancel(context);
             default -> throw McpProtocolException.methodNotFound(method);
         };
         return withServerInfo(result);
@@ -287,6 +305,7 @@ public class McpRequestHandler {
         String nameField = switch (method) {
             case "tools/call", "prompts/get" -> "name";
             case "resources/read" -> "uri";
+            case "tasks/get", "tasks/update", "tasks/cancel" -> "taskId";
             default -> null;
         };
         if (nameField != null) {
@@ -326,8 +345,11 @@ public class McpRequestHandler {
         if (registry.hasCompletions()) {
             capabilities.add("completions", Json.createObjectBuilder());
         }
-        if (!extensions.isEmpty() || registry.hasSkills()) {
+        if (!extensions.isEmpty() || registry.hasSkills() || tasks.enabled()) {
             JsonObjectBuilder announced = Json.createObjectBuilder(extensions.toJson());
+            if (tasks.enabled() && !extensions.announces(Tasks.EXTENSION_ID)) {
+                announced.add(Tasks.EXTENSION_ID, Json.createObjectBuilder());
+            }
             if (registry.hasSkills() && !extensions.announces(SkillSet.EXTENSION_ID)) {
                 announced.add(SkillSet.EXTENSION_ID, Json.createObjectBuilder().add("directoryRead", true));
             }
@@ -357,6 +379,9 @@ public class McpRequestHandler {
             }
             if (tool.annotations() != null) {
                 entry.add("annotations", tool.annotations());
+            }
+            if (tool.taskSupport() != null) {
+                entry.add("execution", Json.createObjectBuilder().add("taskSupport", tool.taskSupport().wire()));
             }
             addDescriptors(entry, tool.icons(), tool.meta());
             tools.add(entry);
@@ -836,6 +861,31 @@ public class McpRequestHandler {
         }
     }
 
+    private JsonObject tasksGet(RequestContext context) {
+        Extensions.require(context.clientCapabilities(), Tasks.EXTENSION_ID);
+        return tasks.get(taskId(context), context.caller());
+    }
+
+    private JsonObject tasksUpdate(RequestContext context) {
+        Extensions.require(context.clientCapabilities(), Tasks.EXTENSION_ID);
+        JsonObject responses = optionalObject(context.params().get("inputResponses"), "params.inputResponses");
+        if (responses == null) {
+            throw McpProtocolException.invalidArguments("params.inputResponses is required");
+        }
+        tasks.update(taskId(context), context.caller(), responses);
+        return Json.createObjectBuilder().add("resultType", "complete").build();
+    }
+
+    private JsonObject tasksCancel(RequestContext context) {
+        Extensions.require(context.clientCapabilities(), Tasks.EXTENSION_ID);
+        tasks.cancel(taskId(context), context.caller());
+        return Json.createObjectBuilder().add("resultType", "complete").build();
+    }
+
+    private static String taskId(RequestContext context) {
+        return ((JsonString) context.params().get("taskId")).getString();
+    }
+
     private JsonObject toolsCall(RequestContext context) {
         return invokeTool(prepareTool(context), ProgressReporter.NONE);
     }
@@ -851,6 +901,9 @@ public class McpRequestHandler {
         }
         if (!Scopes.satisfiesAll(context.caller().scopes(), tool.requiredScopes())) {
             throw new AuthChallengeException("Insufficient scope for tool " + abbreviate(name), String.join(" ", tool.requiredScopes()));
+        }
+        if (tool.taskSupport() == TaskSupport.REQUIRED && !(tasks.enabled() && Tasks.clientSupports(context.clientCapabilities()))) {
+            throw McpProtocolException.missingClientExtension(Tasks.EXTENSION_ID);
         }
         ParamHeaders.check(declaredHeaders(name, tool), arguments, context.headers());
         var problem = SchemaValidator.validate(tool.inputSchema(), arguments);
@@ -875,7 +928,14 @@ public class McpRequestHandler {
         RequestContext context = prepared.context();
         ToolResult outcome;
         try {
-            outcome = prepared.tool().call(new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress, context.trace()));
+            ToolCall call = new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress, context.trace());
+            outcome = prepared.tool().call(call);
+            if (outcome instanceof ToolResult.Task task) {
+                if (tasks.enabled() && Tasks.clientSupports(context.clientCapabilities())) {
+                    return tasks.create(task, call);
+                }
+                outcome = tasks.runInline(task, call);
+            }
         } catch (McpProtocolException | RequestCancelledException e) {
             throw e;
         } catch (Exception e) {
@@ -956,7 +1016,7 @@ public class McpRequestHandler {
         });
     }
 
-    private static JsonObject toResult(ToolResult outcome) {
+    static JsonObject toResult(ToolResult outcome) {
         JsonObjectBuilder result = Json.createObjectBuilder();
         switch (outcome) {
             case ToolResult.Complete complete -> {
@@ -969,6 +1029,7 @@ public class McpRequestHandler {
                     result.add("_meta", complete.meta());
                 }
             }
+            case ToolResult.Task task -> throw new IllegalStateException("A task is not a result");
             case ToolResult.InputRequired input -> {
                 result.add("resultType", "input_required");
                 if (input.inputRequests() != null) {

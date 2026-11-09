@@ -54,7 +54,7 @@ jobs:
     name: MCP conformance suite
     runs-on: ubuntu-latest
     needs: unit
-    # The scenarios this server is known to fail (Tasks extension, x-mcp-header) are listed in mcp-example-conformance/expected-failures.yml.
+    # The scenarios this server is known to fail are listed in mcp-example-conformance/expected-failures.yml (none at the moment). The Tasks extension is switched on for this job.
     # Any other failure, and any listed scenario that starts to pass, fails the job.
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +70,7 @@ jobs:
         run: mvn -B -ntp -q -DskipTests package -pl mcp-example-conformance -am
       - name: Start Payara Micro
         run: |
-          docker run -d --name mcp -p 8080:8080 -v "$PWD/mcp-example-conformance/target/mcp-conformance.war:/opt/payara/deployments/ROOT.war" payara/micro:latest
+          docker run -d --name mcp -p 8080:8080 -e MCP_TASKS_ENABLED=true -v "$PWD/mcp-example-conformance/target/mcp-conformance.war:/opt/payara/deployments/ROOT.war" payara/micro:latest
           for i in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' http://localhost:8080/mcp -d '{}' || true)
             [ "$code" != "000" ] && [ "$code" != "404" ] && break
