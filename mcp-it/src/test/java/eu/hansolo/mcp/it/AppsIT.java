@@ -77,6 +77,7 @@ class AppsIT {
         assertEquals(false, contents.getJsonObject("_meta").getJsonObject("ui").getBoolean("prefersBorder"));
         String page = contents.getString("text");
         assertTrue(page.contains("ui/initialize") && page.contains("ui/notifications/tool-result"), "the page does not speak the host protocol");
+        assertTrue(page.contains("appInfo") && !page.contains("clientInfo"), "ui/initialize carries appInfo (MCP Inspector 2.14.0 rejects clientInfo)");
         assertTrue(!page.contains("http://") && !page.contains("https://"), "the page must not load anything from outside");
     }
 

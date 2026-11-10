@@ -108,7 +108,7 @@
         status('Open this page through a client that supports MCP Apps.');
         return;
       }
-      request('ui/initialize', { protocolVersion: '2026-01-26', clientInfo: { name: 'server-clock', version: '1.0.0' }, appCapabilities: {} }).then(function (result) {
+      request('ui/initialize', { protocolVersion: '2026-01-26', appInfo: { name: 'server-clock', version: '1.0.0' }, appCapabilities: {} }).then(function (result) {
         applyContext(result && result.hostContext);
         notify('ui/notifications/initialized');
         button.disabled = false;

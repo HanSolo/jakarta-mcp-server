@@ -699,7 +699,7 @@ The library checks the wiring at startup (and when a tool is added at runtime): 
 
 The page talks to the host over `postMessage` with JSON-RPC 2.0 (the page is the client, the host the server). This library does not touch that traffic; the example page (`clock.html`, one self-contained file) shows the whole exchange:
 
-1. The page sends `ui/initialize` (`protocolVersion`, `clientInfo`, `appCapabilities`), applies the `hostContext` of the reply (theme, CSS variables) and then sends `ui/notifications/initialized`. The host sends nothing before that.
+1. The page sends `ui/initialize` (`protocolVersion`, `appInfo`, `appCapabilities`; not `clientInfo`, which belongs to the MCP `initialize` between client and server and appears in a misleading example of the 2026-01-26 specification), applies the `hostContext` of the reply (theme, CSS variables) and then sends `ui/notifications/initialized`. The host sends nothing before that.
 2. The host sends `ui/notifications/tool-result` with the `CallToolResult` of the tool call that opened the page. This is why `show_clock` returns `structuredContent` (`{"now": ...}`) next to its text: the page reads the structured part and falls back to the text.
 3. The **Refresh** button sends `tools/call` for `refresh_clock` through the host. That tool is app-only (`Apps.toolMeta(uri, "app")`), so models do not see it, and a host must refuse page calls to tools that lack `app` visibility.
 4. The page also handles `ui/notifications/tool-cancelled`, `ui/notifications/host-context-changed` and `ui/resource-teardown` (answered with `{}`), reports its size with `ui/notifications/size-changed`, ignores messages whose source is not `window.parent`, and writes received values with `textContent` only.
