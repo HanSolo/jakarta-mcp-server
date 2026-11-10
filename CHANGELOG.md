@@ -7,6 +7,7 @@
 
 ### Changed
 - Dependency and plugin updates: parsson 1.1.9, PostgreSQL driver 42.7.14, Testcontainers 2.0.5, compiler 3.16.0, surefire/failsafe 3.6.1, resources 3.5.0, jar 3.5.1, war 3.5.1, source 3.4.0, javadoc 3.12.0, gpg 3.2.8, central-publishing 0.12.0. Not taken yet: JUnit 6 (major), H2 2.5, slf4j-simple 2.1 alpha.
+- Schema fix for the MariaDB and MySQL and added a new TasksClusterMariaDbIT
 
 ### Fixed
 - Javadoc of `McpRequestHandler.handle` named a parameter `headers` after it was renamed `rawHeaders`; the 0.6.0 release build failed on it (the fix is in the 0.6.0 tag).
