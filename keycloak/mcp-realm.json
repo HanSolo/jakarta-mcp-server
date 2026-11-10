@@ -130,6 +130,36 @@
         "tickets:read",
         "tickets:write"
       ]
+    },
+    {
+      "clientId": "mcp-inspector",
+      "name": "MCP Inspector, authorization-code flow with PKCE (development only)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:6274/*",
+        "http://127.0.0.1:6274/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "mcp-audience",
+        "mcp:tools"
+      ],
+      "optionalClientScopes": [
+        "offline_access",
+        "files",
+        "files:read",
+        "tickets:read",
+        "tickets:write"
+      ]
     }
   ],
   "users": [
@@ -140,6 +170,9 @@
       "email": "alice@example.com",
       "firstName": "Alice",
       "lastName": "Example",
+      "realmRoles": [
+        "default-roles-mcp"
+      ],
       "credentials": [
         {
           "type": "password",

@@ -4,11 +4,18 @@
 
 ### Added
 - **MySQL verified:** `TasksClusterMySqlIT` runs the two-instance cluster scenarios on MySQL 8.4 with MySQL Connector/J (`mysql-connector-j`, in the test fixture only), in addition to PostgreSQL and MariaDB. The `LONGTEXT` columns and inline indexes from 0.7.0 work unchanged. Over a connection without TLS, MySQL 8's `caching_sha2_password` needs `allowPublicKeyRetrieval=true` in the JDBC URL (the IT sets it; in production, use TLS instead).
+- **Build requirements are checked:** `maven-enforcer-plugin` (3.6.1) fails the build at the start with a readable message unless Maven is 3.9.0 or newer and the JDK is 21 or newer. 3.9.0 is the version CI and the maintainer use, not a proven lower bound.
+- **Design note `docs/design/deprecated-features.md`:** why the library has no logging, sampling or roots API (2026-07-28 deprecates all three, and dynamic client registration), what it still owes (never send `notifications/message`), and when to revisit.
+- **`McpStreamingTest.noLogMessagesAreSentWhetherOrNotALogLevelIsRequested`:** a streamed `tools/call` with and without `io.modelcontextprotocol/logLevel` never produces `notifications/message`.
+- **Keycloak example realm:** new public client `mcp-inspector` (authorization code with PKCE, optional scope `offline_access`) so MCP Inspector can complete a browser login, and `alice` now has the realm's default roles (without them Keycloak refuses offline tokens). Verified with MCP Inspector 2.14.0's CLI: login, `tools/list` and `tools/call` against the example server. Steps in `scripts/client-check/README.md`. Dynamic registration against Keycloak still fails under its default policies (`Trusted Hosts`, `Allowed Client Scopes`); it is deprecated in 2026-07-28.
+
+### Changed
+- The comment in the root `pom.xml` for the Maven Central upload now names all three modules of the command (`mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc`).
 
 ### Notes
 - **Conformance:** the `tasks-status-notifications` scenario is skipped by the conformance suite itself (it still targets the old POST-SSE channel and waits for a rewrite against `subscriptions/listen`), so it reports 0 checks for every server. `notifications/tasks` is covered by this project's own integration tests.
 
-## 0.7.0 (2026-11.10)
+## 0.7.0 (2026-11-10)
 
 ### Added
 - **`scripts/release-check.sh` and a CI job `release-check`:** build the publishable modules with the release profile (sources and Javadoc jars, no signing, no upload), so a Javadoc error fails in CI instead of at the Central upload.

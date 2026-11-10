@@ -220,6 +220,31 @@ class McpStreamingTest {
         };
     }
 
+    /**
+     * Logging is deprecated in 2026-07-28 and not implemented. The specification forbids {@code notifications/message} for a request without
+     * {@code io.modelcontextprotocol/logLevel}; a request that does ask for a level simply gets none, because the server has no logging to offer.
+     */
+    @Test
+    void noLogMessagesAreSentWhetherOrNotALogLevelIsRequested() throws IOException {
+        for (String level : new String[] {null, "debug", "error"}) {
+            JsonObject original = Json.createReader(new StringReader(body("count", "9", Json.createObjectBuilder().add("steps", 2).build(), "t"))).readObject();
+            JsonObject params   = original.getJsonObject("params");
+            JsonObjectBuilder meta = Json.createObjectBuilder(params.getJsonObject("_meta"));
+            if (level != null) {
+                meta.add("io.modelcontextprotocol/logLevel", level);
+            }
+            JsonObject changed = Json.createObjectBuilder(original).add("params", Json.createObjectBuilder(params).add("_meta", meta)).build();
+            Map<String, String> headers = headers("count", BOTH);
+            McpHttpResponse response = handler.handle(headers::get, stream(changed.toString()));
+            assertTrue(response.isStreaming(), String.valueOf(level));
+            List<JsonObject> events = events(response);
+            assertEquals(3, events.size(), "two progress notifications and the result, for log level " + level);
+            for (JsonObject event : events) {
+                assertFalse(event.containsKey("method") && "notifications/message".equals(event.getString("method")), "log level " + level);
+            }
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------------------
 
     private McpHttpResponse call(String tool, String id, JsonObject arguments, Object progressToken, String accept) {
