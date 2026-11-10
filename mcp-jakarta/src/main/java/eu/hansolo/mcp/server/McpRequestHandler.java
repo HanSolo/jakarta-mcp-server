@@ -921,7 +921,7 @@ public class McpRequestHandler {
         List<String> wanted = ids.stream().filter(watched::containsKey).toList();
         if (wanted.isEmpty()) {
             return 0;
-            }
+        }
         var views = tasks.views(wanted, subscription.caller());   // one store lookup for all of them
         for (String taskId : wanted) {
             var view = views.get(taskId);

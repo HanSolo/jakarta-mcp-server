@@ -27,7 +27,7 @@ public class TicketTools {
     static final int DEFAULT_LIMIT = 20;
     static final int MAX_LIMIT     = 50;
 
-    private TicketStore store;
+    private TicketStore      store;
     private McpNotifications notifications;
 
 
@@ -37,7 +37,7 @@ public class TicketTools {
 
     @Inject
     public TicketTools(TicketStore store, McpNotifications notifications) {
-        this.store = store;
+        this.store         = store;
         this.notifications = notifications;
     }
 

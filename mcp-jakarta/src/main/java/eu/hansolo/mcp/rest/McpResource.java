@@ -82,7 +82,7 @@ public class McpResource {
         } catch (RuntimeException e) {
             LOG.log(Level.FINE, "Could not switch off the async timeout", e);
         }
-        }
+    }
 
     private static Response plain(McpHttpResponse result) {
         Response.ResponseBuilder response = Response.status(result.status()).header("X-Content-Type-Options", "nosniff");
@@ -152,7 +152,7 @@ public class McpResource {
         servlet.setHeader("Cache-Control", "no-cache, no-transform");
         servlet.setHeader("X-Accel-Buffering", "no");
         servlet.setHeader("X-Content-Type-Options", "nosniff");
-            servlet.flushBuffer();
+        servlet.flushBuffer();
     }
 
     /** Each event is {@code event: message}, one {@code data:} line per line of JSON; every write is flushed at once. */
@@ -166,7 +166,7 @@ public class McpResource {
                 }
                 output.write(event.append('\n').toString().getBytes(StandardCharsets.UTF_8));
                 output.flush();
-        }
+            }
 
             @Override
             public void comment(String text) throws IOException {
