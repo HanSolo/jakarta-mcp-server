@@ -4,12 +4,15 @@
 
 ### Added
 - **`scripts/release-check.sh` and a CI job `release-check`:** build the publishable modules with the release profile (sources and Javadoc jars, no signing, no upload), so a Javadoc error fails in CI instead of at the Central upload.
+- **`scripts/client-check/`:** a dependency-free Node client (`check.mjs`) that runs the Tasks flow (create, poll, `input_required`, `tasks/update`, `tasks/cancel`, errors, inline fallback, `subscriptions/listen`) or the MCP Apps checks (`--apps`) against a running example, plus a checklist for MCP Inspector and other clients.
 
 ### Changed
+- **MariaDB and MySQL in `JdbcTaskStore`:** `create-schema` now uses `LONGTEXT` columns and declares the indexes inside `CREATE TABLE` when the database is MariaDB or MySQL (before, it used `CLOB` and `CREATE INDEX IF NOT EXISTS`, which they do not accept). New `JdbcTaskStore.ddl(table, textType, inlineIndexes)`. `TasksClusterIT` now has a MariaDB variant (`TasksClusterMariaDbIT`, shared code in `TasksClusterBase`). Verified on MariaDB only once that IT has run; MySQL itself is not tested.
+- **`TaskStore.findAll(ids)`** (new, with a default that calls `find` for each id): a `subscriptions/listen` stream that watches several tasks now makes one store lookup per round instead of one per task. `JdbcTaskStore` overrides it with one `WHERE id IN (...)` query (chunks of 200 ids). Custom stores keep working unchanged.
 - Dependency and plugin updates: parsson 1.1.9, PostgreSQL driver 42.7.14, Testcontainers 2.0.5, compiler 3.16.0, surefire/failsafe 3.6.1, resources 3.5.0, jar 3.5.1, war 3.5.1, source 3.4.0, javadoc 3.12.0, gpg 3.2.8, central-publishing 0.12.0. Not taken yet: JUnit 6 (major), H2 2.5, slf4j-simple 2.1 alpha.
-- Schema fix for the MariaDB and MySQL and added a new TasksClusterMariaDbIT
 
 ### Fixed
+- `ServerFixture.awaitDeployed` (integration tests) accepted WildFly's HTML welcome page (HTTP 200) as "deployed", so the first test class could start before the WAR was up and fail with HTML instead of JSON. It now needs a JSON body.
 - Javadoc of `McpRequestHandler.handle` named a parameter `headers` after it was renamed `rawHeaders`; the 0.6.0 release build failed on it (the fix is in the 0.6.0 tag).
 
 ## 0.6.0 (2026-11-09)

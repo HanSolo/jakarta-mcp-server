@@ -918,22 +918,24 @@ public class McpRequestHandler {
      */
     private int sendTaskChanges(Subscription subscription, McpHttpResponse.EventSink sink, Map<String, Integer> watched, List<String> ids) throws IOException {
         int written = 0;
-        for (String taskId : ids) {
-            if (!watched.containsKey(taskId)) {
-                continue;
+        List<String> wanted = ids.stream().filter(watched::containsKey).toList();
+        if (wanted.isEmpty()) {
+            return 0;
             }
-            var view = tasks.view(taskId, subscription.caller());
-            if (view.isEmpty()) {
+        var views = tasks.views(wanted, subscription.caller());   // one store lookup for all of them
+        for (String taskId : wanted) {
+            var view = views.get(taskId);
+            if (view == null) {
                 watched.remove(taskId);
                 continue;
             }
             Integer last = watched.get(taskId);
-            if (last == null || last != view.get().key()) {
-                sink.send(subscription.taskNotification(view.get().params()));
+            if (last == null || last != view.key()) {
+                sink.send(subscription.taskNotification(view.params()));
                 written++;
-                watched.put(taskId, view.get().key());
+                watched.put(taskId, view.key());
             }
-            if (view.get().terminal()) {
+            if (view.terminal()) {
                 watched.remove(taskId);
             }
         }

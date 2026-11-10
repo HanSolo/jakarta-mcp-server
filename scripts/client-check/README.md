@@ -29,14 +29,40 @@ A failure is a disagreement between this script and the server. It does not say 
 
 ## With MCP Inspector (or any other client)
 
-Run the same sequence by hand and compare with the script's output:
+A second client that was not written for this project. Checked by hand with MCP Inspector 2.14.0 on 2026-11-10.
 
-1. Connect to the URL. The client must send protocol version `2026-07-28`; if it cannot, that is a client limit, not a finding.
+**Start the server** (from the repository root; Docker is needed):
+
+```bash
+# Tasks
+mvn -pl mcp-example-tasks -am package -DskipTests
+docker run --rm -p 8080:8080 -e MCP_TASKS_ENABLED=true \
+  -v "$PWD/mcp-example-tasks/target/mcp-example-tasks.war:/opt/payara/deployments/ROOT.war" payara/micro:latest
+
+# MCP Apps (stop the container above first, both use port 8080)
+mvn -pl mcp-example-apps -am package -DskipTests
+docker run --rm -p 8080:8080 \
+  -v "$PWD/mcp-example-apps/target/mcp-example-apps.war:/opt/payara/deployments/ROOT.war" payara/micro:latest
+```
+
+**Start the Inspector** (Node 20 or newer; version 2.x, shown in the lower left corner):
+
+```bash
+npx @modelcontextprotocol/inspector@latest --transport http --server-url http://localhost:8080/mcp --protocol-era modern
+```
+
+`--protocol-era modern` is required. The Inspector's default era is `legacy`: it opens with the 2025 `initialize` handshake, and this server, which speaks only 2026-07-28, answers `-32020 Missing MCP-Protocol-Version header`. That is the correct answer to a legacy client, not a server fault.
+
+**Run the sequence** and compare with the script's output:
+
+1. Connect. The Inspector reports protocol version `2026-07-28`.
 2. List tools: `build_report` is there.
-3. Call `build_report` with `topic` and `sections` 2. With the Tasks extension declared, a task comes back; without it, the call runs about two seconds and returns the text inline.
+3. Call `build_report` with `topic` and `sections` 2. This Inspector declares the Tasks extension, so a task comes back. A client that does not declare it waits about two seconds and gets the text inline; that is also correct.
 4. Watch the task: `working` with a status message per section, then `input_required` with the publish question.
 5. Answer it (`publish` = true). The task becomes `completed` and the result says "published".
 6. Start another task with 8 sections and cancel it: it ends as `cancelled`.
-7. Apps: call `show_clock`; a client with MCP Apps support shows the page `ui://clock/app.html`, any other client gets the text.
+7. Apps: stop the Tasks server, start the Apps example, connect again and call `show_clock`. The Inspector shows the page `ui://clock/app.html` with the time; the refresh button calls `refresh_clock` through the host.
 
 Write down every difference between the script and the client. A difference that is in the client's favour is a finding about the server or the spec.
+
+**What this found:** the clock page sent `clientInfo` in `ui/initialize`; the MCP Apps handshake between a page and its host needs `appInfo` (`clientInfo` belongs to the MCP `initialize` between client and server, and a misleading example in the 2026-01-26 specification uses it for the page, see [ext-apps issue 634](https://github.com/modelcontextprotocol/ext-apps/issues/634)). Fixed; `AppsIT` now checks for it.

@@ -32,6 +32,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -65,6 +67,7 @@ public class TaskService {
     private static final Logger LOG         = Logger.getLogger(TaskService.class.getName());
     private static final int    MAX_RETRIES = 25;
     private static final int    BATCH       = 100;
+    private static final int    MAX_ID      = 128;
 
     private final TaskStore                store;
     private final TaskConfig               config;
@@ -282,6 +285,23 @@ public class TaskService {
     }
 
     /**
+     * Like {@link #view} for several tasks, with one store lookup for all of them. Tasks that are unknown, expired, foreign or not
+     * permitted are absent from the result.
+     */
+    public Map<String, TaskView> views(Collection<String> taskIds, Caller caller) {
+        Map<String, TaskView> views = new LinkedHashMap<>();
+        List<String> valid = taskIds.stream().filter(id -> id != null && id.length() <= MAX_ID).toList();
+        for (Map.Entry<String, TaskRecord> entry : store.findAll(valid).entrySet()) {
+            TaskRecord rec = entry.getValue();
+            if (visible(rec, caller)) {
+                JsonObject params = detail(rec).build();
+                views.put(entry.getKey(), new TaskView(rec.status().isTerminal(), params.toString().hashCode(), params));
+            }
+        }
+        return views;
+    }
+
+    /**
      * Registers a listener that is called with the id of every task this instance changes (state, message, input). Changes made by other
      * instances do not reach it: a stream finds those by looking in the store.
      */
@@ -335,13 +355,16 @@ public class TaskService {
 
     /** Finds the task for this caller. Unknown, foreign, expired and not-permitted tasks are indistinguishable. */
     private TaskRecord lookup(String taskId, Caller caller) {
+        Optional<TaskRecord> found = taskId == null || taskId.length() > MAX_ID ? Optional.empty() : store.find(taskId);
+        return found.filter(r -> visible(r, caller)).orElseThrow(() -> McpProtocolException.invalidArguments("Unknown task"));
+    }
+
+    /** True if the caller owns the record, it has not expired and the caller has the scopes of its tool. */
+    private boolean visible(TaskRecord rec, Caller caller) {
         Instant now = clock.instant();
-        Optional<TaskRecord> found = taskId == null || taskId.length() > 128 ? Optional.empty() : store.find(taskId);
-        TaskRecord rec = found.filter(r -> r.owner().equals(owner(caller))).filter(r -> r.expiresAt() == null || r.expiresAt().isAfter(now)).filter(r -> registry.find(r.tool()).map(tool -> Scopes.satisfiesAll(caller.scopes(), tool.requiredScopes())).orElse(true)).orElse(null);
-        if (rec == null) {
-            throw McpProtocolException.invalidArguments("Unknown task");
-        }
-        return rec;
+        return rec.owner().equals(owner(caller))
+               && (rec.expiresAt() == null || rec.expiresAt().isAfter(now))
+               && registry.find(rec.tool()).map(tool -> Scopes.satisfiesAll(caller.scopes(), tool.requiredScopes())).orElse(true);
     }
 
 

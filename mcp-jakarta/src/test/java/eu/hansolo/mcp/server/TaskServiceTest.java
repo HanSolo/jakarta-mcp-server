@@ -10,6 +10,8 @@ import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.protocol.ErrorCodes;
 import eu.hansolo.mcp.protocol.McpProtocolException;
 import eu.hansolo.mcp.tasks.InMemoryTaskStore;
+import eu.hansolo.mcp.tasks.TaskRecord;
+import eu.hansolo.mcp.tasks.TaskStore;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonValue;
@@ -19,11 +21,15 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -430,6 +436,42 @@ class TaskServiceTest {
             inner.delete(id);
         }
     }
+
+    @Test
+    void viewsLooksUpAllTasksInOneStoreCallAndLeavesOutWhatTheCallerMayNotSee() throws Exception {
+        AtomicInteger finds    = new AtomicInteger();
+        AtomicInteger findAlls = new AtomicInteger();
+        TaskStore counting = new TaskStore() {
+            @Override public void create(TaskRecord task) { store.create(task); }
+            @Override public Optional<TaskRecord> find(String id) { finds.incrementAndGet(); return store.find(id); }
+            @Override public Map<String, TaskRecord> findAll(Collection<String> ids) { findAlls.incrementAndGet(); return TaskStore.super.findAll(ids); }
+            @Override public boolean replace(TaskRecord current, TaskRecord next) { return store.replace(current, next); }
+            @Override public List<String> leaseExpired(Instant now, int limit) { return store.leaseExpired(now, limit); }
+            @Override public List<String> expired(Instant now, int limit) { return store.expired(now, limit); }
+            @Override public void delete(String id) { store.delete(id); }
+        };
+        TaskService service = new TaskService(counting, config(100), McpRegistry.of(List.of()), clock, Executors.newVirtualThreadPerTaskExecutor());
+        CountDownLatch release = new CountDownLatch(1);
+        TaskWork work = ctx -> {
+            release.await(5, TimeUnit.SECONDS);
+            return ToolResult.text("done");
+        };
+        String first   = id(service.create(ToolResult.task(work), call(ALICE)));
+        String second  = id(service.create(ToolResult.task(work), call(ALICE)));
+        String foreign = id(service.create(ToolResult.task(work), call(BOB)));
+        finds.set(0);
+
+        Map<String, TaskService.TaskView> views = service.views(List.of(first, second, foreign, "unknown", first), ALICE);
+        assertEquals(Set.of(first, second), views.keySet());
+        assertEquals(first, views.get(first).params().getString("taskId"));
+        assertEquals(1, findAlls.get());
+        assertEquals(4, finds.get(), "the default findAll asks for each distinct id (a store without a batch query), but the service made one findAll call");
+        assertEquals(List.of(), service.views(List.of(), ALICE).keySet().stream().toList());
+        assertEquals(views.get(first).key(), service.view(first, ALICE).orElseThrow().key(), "same state, same key as the single lookup");
+        release.countDown();
+        service.close();
+    }
+
 
     private TaskService service(TaskConfig config) {
         return new TaskService(store, config, McpRegistry.of(List.of()), clock, Executors.newVirtualThreadPerTaskExecutor());
