@@ -9,7 +9,11 @@ import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -61,6 +65,35 @@ class JdbcTaskStoreTest {
         TaskRecord created = TaskRecord.create("dup", "alice", "x", T0, 1000L, 100L, "w", T0.plusSeconds(30));
         store.create(created);
         assertThrows(IllegalStateException.class, () -> store.create(created));
+    }
+
+    @Test
+    void findAllReturnsTheExistingTasksAndIgnoresUnknownDuplicateAndNullIds() {
+        JdbcTaskStore store = store();
+        store.create(TaskRecord.create("a", "alice", "x", T0, 10_000L, 100L, "w", T0.plusSeconds(30)));
+        store.create(TaskRecord.create("b", "bob", "x", T0, 10_000L, 100L, "w", T0.plusSeconds(30)));
+        Map<String, TaskRecord> found = store.findAll(Arrays.asList("b", "missing", "a", "b", null));
+        assertEquals(Set.of("a", "b"), found.keySet(), "the order of the result is not part of the contract");
+        assertEquals(store.find("a").orElseThrow(), found.get("a"));
+        assertEquals("bob", found.get("b").owner());
+        assertTrue(store.findAll(List.of()).isEmpty());
+        assertTrue(store.findAll(List.of("missing")).isEmpty());
+    }
+
+    @Test
+    void findAllCrossesTheChunkBoundary() {
+        JdbcTaskStore store = store();
+        int total = JdbcTaskStore.FIND_ALL_CHUNK * 2 + 5;
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < total; i++) {
+            String id = "chunk-" + i;
+            ids.add(id);
+            store.create(TaskRecord.create(id, "alice", "x", T0, 10_000L, 100L, "w", T0.plusSeconds(30)));
+        }
+        ids.add("chunk-missing");
+        Map<String, TaskRecord> found = store.findAll(ids);
+        assertEquals(total, found.size());
+        assertEquals("chunk-" + (total - 1), found.get("chunk-" + (total - 1)).id());
     }
 
     @Test

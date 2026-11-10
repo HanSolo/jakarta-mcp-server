@@ -116,4 +116,4 @@ Implementations:
 4. A task whose worker is lost is marked `failed` (`cancelled` if cancellation was pending). No restart.
 5. 0.6.0 is held until the JDBC store and the two-instance integration test pass.
 
-Differences between this note and the code: the store SPI is `create` / `find` / `replace` (compare and set on `version`) / `leaseExpired` / `expired` / `delete`, and the owner check lives in `TaskService`, not in the store; an expired task is deleted (not first marked failed); `ToolResult.task(...)` carries `ttlMs`, `noExpiry` and `pollIntervalMs` as options.
+Differences between this note and the code: the store SPI is `create` / `find` / `findAll` (optional batch lookup, defaults to `find` per id) / `replace` (compare and set on `version`) / `leaseExpired` / `expired` / `delete`, and the owner check lives in `TaskService`, not in the store; an expired task is deleted (not first marked failed); `ToolResult.task(...)` carries `ttlMs`, `noExpiry` and `pollIntervalMs` as options.

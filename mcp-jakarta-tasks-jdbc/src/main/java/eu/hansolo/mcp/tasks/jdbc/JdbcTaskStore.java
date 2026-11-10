@@ -25,7 +25,11 @@ import java.sql.Statement;
 import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
@@ -282,6 +286,38 @@ public class JdbcTaskStore implements TaskStore {
         } else {
             statement.setString(first + 1, task.statusMessage().length() > 2048 ? task.statusMessage().substring(0, 2048) : task.statusMessage());
         }
+    }
+
+    /** Ids per query: well under the parameter limits of the common databases (Oracle 1000 in an IN list, SQL Server 2100 parameters). */
+    static final int FIND_ALL_CHUNK = 200;
+
+    @Override
+    public Map<String, TaskRecord> findAll(Collection<String> ids) {
+        Map<String, TaskRecord> found = new LinkedHashMap<>();
+        List<String> wanted = new ArrayList<>(new LinkedHashSet<>(ids.stream().filter(java.util.Objects::nonNull).toList()));
+        if (wanted.isEmpty()) {
+            return found;
+        }
+        try (Connection connection = dataSource().getConnection()) {
+            for (int from = 0; from < wanted.size(); from += FIND_ALL_CHUNK) {
+                List<String> chunk = wanted.subList(from, Math.min(wanted.size(), from + FIND_ALL_CHUNK));
+                String sql = "SELECT " + COLUMNS + " FROM " + table + " WHERE id IN (" + "?, ".repeat(chunk.size() - 1) + "?)";
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < chunk.size(); i++) {
+                        statement.setString(i + 1, chunk.get(i));
+                    }
+                    try (ResultSet rows = statement.executeQuery()) {
+                        while (rows.next()) {
+                            TaskRecord record = read(rows);
+                            found.put(record.id(), record);
+                        }
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw failure("Could not read tasks", e);
+        }
+        return found;
     }
 
     @Override

@@ -1,7 +1,10 @@
 package eu.hansolo.mcp.tasks;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -33,6 +36,23 @@ public interface TaskStore {
     void create(TaskRecord task);
 
     Optional<TaskRecord> find(String id);
+
+    /**
+     * Looks up several tasks at once. A stream that watches many tasks calls this once per round instead of {@link #find} once per task, so
+     * a store behind a network should override it with a single query. The default calls {@link #find} for each id.
+     *
+     * @param ids the task ids; duplicates and {@code null} are ignored
+     * @return the tasks that exist, by id; unknown ids are absent
+     */
+    default Map<String, TaskRecord> findAll(Collection<String> ids) {
+        Map<String, TaskRecord> found = new LinkedHashMap<>();
+        for (String id : ids) {
+            if (id != null && !found.containsKey(id)) {
+                find(id).ifPresent(record -> found.put(id, record));
+            }
+        }
+        return found;
+    }
 
     /**
      * Compare and set.

@@ -70,6 +70,7 @@ async function waitFor(taskId, wanted, seconds = 30) {
     return last;
 }
 
+const pending = task => !!task?.inputRequests && Object.keys(task.inputRequests).length > 0;
 const publish = taskId => taskOp('tasks/update', taskId, { inputResponses: { publish: { action: 'accept', content: { publish: true } } } });
 
 async function tasksChecks() {
@@ -142,7 +143,7 @@ async function listenCheck() {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 40000);
     const messages = [];
-    let answered = false;
+    let answered = false, answeredAfter = -1;
     try {
         const res = await fetch(URL_, {
             method: 'POST', signal: ctrl.signal, headers: headers('subscriptions/listen'),
@@ -163,7 +164,7 @@ async function listenCheck() {
                 let m; try { m = JSON.parse(data); } catch { continue; }
                 messages.push(m);
                 const p = m.params ?? {};
-                if (m.method === 'notifications/tasks' && p.status === 'input_required' && !answered) { answered = true; publish(t.taskId); }
+                if (m.method === 'notifications/tasks' && p.status === 'input_required' && !answered) { answered = true; answeredAfter = messages.filter(x => x.method === 'notifications/tasks').length; publish(t.taskId); }
                 if (m.method === 'notifications/tasks' && ['completed', 'failed', 'cancelled'].includes(p.status)) finished = true;
             }
         }
@@ -173,6 +174,16 @@ async function listenCheck() {
     } finally { clearTimeout(timer); }
     const notes = messages.filter(m => m.method === 'notifications/tasks');
     console.log(`      ${messages.length} message(s) on the stream, ${notes.length} task notification(s): ${notes.map(n => n.params?.status).join(' -> ')}`);
+    notes.forEach((n, i) => {
+        const q = n.params ?? {};
+        console.log(`      #${i + 1} ${q.status}${i >= answeredAfter && answeredAfter >= 0 ? ' (after the answer)' : ''}  statusMessage=${JSON.stringify(q.statusMessage ?? null)}  lastUpdatedAt=${q.lastUpdatedAt}  inputRequests=${pending(q) ? Object.keys(q.inputRequests).join(',') : q.inputRequests ? '{} (empty)' : 'none'}`);
+    });
+    const stale = notes.filter((n, i) => i >= answeredAfter && answeredAfter >= 0 && n.params?.status === 'input_required');
+    if (stale.length > 0) {
+        // Not a failure: the spec text decides whether a task that has been answered may still be reported as input_required.
+        console.log(`NOTE  ${stale.length} notification(s) after the answer still say input_required${stale.some(n => pending(n.params)) ? ' and still carry open inputRequests (a client could ask again)' : ' with no open inputRequests (the answer was recorded, the work has not resumed yet)'}`);
+        console.log(`      ${short(stale[0].params)}`);
+    }
     const ack = messages.find(m => m.method === 'notifications/subscriptions/acknowledged' || JSON.stringify(m).includes('acknowledged'));
     check('the stream acknowledges the subscription and lists the task id', !!ack && JSON.stringify(ack).includes(t.taskId), short(messages[0] ?? 'nothing'));
     check('a notification arrives for the task', notes.some(n => n.params?.taskId === t.taskId), short(messages));
