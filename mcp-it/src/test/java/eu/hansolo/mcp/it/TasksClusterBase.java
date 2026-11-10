@@ -14,6 +14,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 

@@ -97,6 +97,18 @@ class JdbcTaskStoreTest {
     }
 
     @Test
+    void ddlHasSeparateIndexesOrInlineOnesForMysqlAndMariadb() {
+        List<String> separate = JdbcTaskStore.ddl("mcp_tasks", "TEXT");
+        assertEquals(3, separate.size());
+        assertTrue(separate.get(1).startsWith("CREATE INDEX IF NOT EXISTS mcp_tasks_lease"));
+        List<String> inline = JdbcTaskStore.ddl("mcp_tasks", "LONGTEXT", true);
+        assertEquals(1, inline.size());
+        assertTrue(inline.get(0).contains("result_json LONGTEXT"));
+        assertTrue(inline.get(0).contains("INDEX mcp_tasks_lease (lease_until)"));
+        assertFalse(inline.get(0).contains("CREATE INDEX"));
+    }
+
+    @Test
     void replaceIsCompareAndSet() {
         JdbcTaskStore store = store();
         TaskRecord created = TaskRecord.create("cas", "alice", "x", T0, 1000L, 100L, "w", T0.plusSeconds(30));

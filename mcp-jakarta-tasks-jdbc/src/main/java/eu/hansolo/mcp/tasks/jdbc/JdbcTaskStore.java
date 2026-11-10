@@ -133,10 +133,25 @@ public class JdbcTaskStore implements TaskStore {
         }
     }
 
-    /** The statements that create the task table and its indexes. {@code textType} is the column type for JSON text: {@code TEXT} on PostgreSQL, {@code CLOB} on H2. */
+    /**
+     * The statements that create the task table and its indexes. {@code textType} is the column type for JSON text: {@code TEXT} on PostgreSQL,
+     * {@code LONGTEXT} on MariaDB and MySQL (see {@link #ddl(String, String, boolean)}), {@code CLOB} on H2 and the others.
+     */
     public static List<String> ddl(String table, String textType) {
+        return ddl(table, textType, false);
+    }
+
+    /**
+     * Like {@link #ddl(String, String)}, optionally with the indexes inside the {@code CREATE TABLE} statement. MySQL has no
+     * {@code CREATE INDEX IF NOT EXISTS}, so for MariaDB and MySQL the indexes are declared inline ({@code inlineIndexes} = true).
+     */
+    public static List<String> ddl(String table, String textType, boolean inlineIndexes) {
         checkTable(table);
-        return List.of("CREATE TABLE IF NOT EXISTS " + table + " (id VARCHAR(64) PRIMARY KEY, owner_subject VARCHAR(512) NOT NULL, tool VARCHAR(256) NOT NULL, status VARCHAR(16) NOT NULL, status_message VARCHAR(2048), created_at BIGINT NOT NULL, last_updated_at BIGINT NOT NULL, ttl_ms BIGINT, expires_at BIGINT, poll_interval_ms BIGINT NOT NULL, result_json " + textType + ", error_json " + textType + ", input_requests_json " + textType + " NOT NULL, input_responses_json " + textType + " NOT NULL, cancel_requested BOOLEAN NOT NULL, worker_id VARCHAR(64), lease_until BIGINT, version_no BIGINT NOT NULL)",
+        String columns = "id VARCHAR(64) PRIMARY KEY, owner_subject VARCHAR(512) NOT NULL, tool VARCHAR(256) NOT NULL, status VARCHAR(16) NOT NULL, status_message VARCHAR(2048), created_at BIGINT NOT NULL, last_updated_at BIGINT NOT NULL, ttl_ms BIGINT, expires_at BIGINT, poll_interval_ms BIGINT NOT NULL, result_json " + textType + ", error_json " + textType + ", input_requests_json " + textType + " NOT NULL, input_responses_json " + textType + " NOT NULL, cancel_requested BOOLEAN NOT NULL, worker_id VARCHAR(64), lease_until BIGINT, version_no BIGINT NOT NULL";
+        if (inlineIndexes) {
+            return List.of("CREATE TABLE IF NOT EXISTS " + table + " (" + columns + ", INDEX " + table + "_lease (lease_until), INDEX " + table + "_expires (expires_at))");
+        }
+        return List.of("CREATE TABLE IF NOT EXISTS " + table + " (" + columns + ")",
                        "CREATE INDEX IF NOT EXISTS " + table + "_lease ON " + table + " (lease_until)",
                        "CREATE INDEX IF NOT EXISTS " + table + "_expires ON " + table + " (expires_at)");
     }
@@ -144,8 +159,10 @@ public class JdbcTaskStore implements TaskStore {
     private void createSchema() {
         try (Connection connection = dataSource().getConnection(); Statement statement = connection.createStatement()) {
             String product = connection.getMetaData().getDatabaseProductName();
-            String text    = product != null && product.toLowerCase(java.util.Locale.ROOT).contains("postgres") ? "TEXT" : "CLOB";
-            for (String sql : ddl(table, text)) {
+            String name    = product == null ? "" : product.toLowerCase(java.util.Locale.ROOT);
+            boolean mysql  = name.contains("mysql") || name.contains("mariadb");
+            String text    = name.contains("postgres") ? "TEXT" : mysql ? "LONGTEXT" : "CLOB";
+            for (String sql : ddl(table, text, mysql)) {
                 statement.execute(sql);
             }
         } catch (SQLException e) {
