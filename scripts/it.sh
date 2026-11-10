@@ -244,8 +244,8 @@ evaluate() {
         elif [ "$run" -eq 0 ] || [ "$skipped" -ge "$run" ]; then
             if [ "$server" = "liberty" ] && [ "$name" = "McpTicketsKeycloakIT" ]; then
                 verdict="skipped by design (needs a data source on Open Liberty, see README)"
-            elif [ "$server" != "payara" ] && [ "$name" = "TasksJndiIT" ]; then
-                verdict="skipped by design (the JNDI data source is only scripted for Payara)"
+            elif [ "$server" = "liberty" ] && [ "$name" = "TasksJndiIT" ]; then
+                verdict="skipped by design (the JNDI data source is not scripted for Open Liberty yet)"
             else
                 verdict="SKIPPED: the tests did not run (Docker not usable for Testcontainers?)"
                 problem=1

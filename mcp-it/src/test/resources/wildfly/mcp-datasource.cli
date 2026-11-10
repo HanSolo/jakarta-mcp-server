@@ -1,0 +1,7 @@
+# Run by TasksJndiIT before WildFly starts (jboss-cli.sh --file=...): installs the PostgreSQL driver as a module and defines the data
+# source java:jboss/datasources/mcp in standalone.xml, which the JDBC task store then finds with mcp.tasks.datasource.
+module add --name=org.postgresql --resources=/tmp/postgresql.jar --dependencies=javax.api
+embed-server --server-config=standalone.xml --std-out=echo
+/subsystem=datasources/jdbc-driver=postgresql:add(driver-name=postgresql, driver-module-name=org.postgresql, driver-class-name=org.postgresql.Driver)
+data-source add --name=mcpDS --jndi-name=java:jboss/datasources/mcp --driver-name=postgresql --connection-url=jdbc:postgresql://postgres:5432/mcp --user-name=mcp --password=mcp
+stop-embedded-server
