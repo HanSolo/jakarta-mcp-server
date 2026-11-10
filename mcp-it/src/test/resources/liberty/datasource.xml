@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Merged into the integration-test server.xml by TasksJndiIT (configDropins/overrides): the PostgreSQL driver and the data source jdbc/mcp. -->
+<server description="mcp integration tests: data source">
+    <featureManager>
+        <feature>jdbc-4.3</feature>
+    </featureManager>
+    <library id="postgresLib">
+        <file name="${server.config.dir}/postgresql.jar"/>
+    </library>
+    <dataSource id="mcp" jndiName="jdbc/mcp">
+        <jdbcDriver libraryRef="postgresLib"/>
+        <properties.postgresql serverName="postgres" portNumber="5432" databaseName="mcp" user="mcp" password="mcp"/>
+    </dataSource>
+</server>

@@ -24,7 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The JDBC task store through a container-managed {@code DataSource} (setting {@code mcp.tasks.datasource}), the production path.
  * Payara Micro gets a JDBC connection pool and the resource {@code jdbc/mcp} from a pre-boot command file, with the PostgreSQL driver
  * on its library path. WildFly gets the driver as a module and the data source {@code java:jboss/datasources/mcp} from a CLI script
- * that runs before the server starts. Open Liberty needs its own configuration and is skipped.
+ * that runs before the server starts. Open Liberty gets the driver in its server directory and the data source {@code jdbc/mcp} from a
+ * file in {@code configDropins/overrides}, so the shared {@code server.xml} stays as it is.
  */
 class TasksJndiIT {
 
@@ -41,8 +42,9 @@ class TasksJndiIT {
     @BeforeAll
     static void start() throws Exception {
         Assumptions.assumeTrue(ServerFixture.dockerAvailable(), "Docker is not available: skipping integration tests");
-        boolean wildfly = ServerFixture.serverName().equals("wildfly");
-        Assumptions.assumeTrue(wildfly || ServerFixture.serverName().equals("payara"), "The JNDI DataSource setup is only scripted for Payara and WildFly");
+        String  name    = ServerFixture.serverName();
+        boolean wildfly = name.equals("wildfly");
+        boolean liberty = name.equals("liberty");
         network = Network.newNetwork();
         postgres = new GenericContainer<>("postgres:17-alpine").withNetwork(network).withNetworkAliases("postgres").withEnv("POSTGRES_PASSWORD", "mcp").withEnv("POSTGRES_USER", "mcp").withEnv("POSTGRES_DB", "mcp")
                                                               .waitingFor(Wait.forLogMessage(".*database system is ready to accept connections.*\\n", 2)).withStartupTimeout(Duration.ofMinutes(2));
@@ -53,6 +55,9 @@ class TasksJndiIT {
             // the CLI script runs offline against standalone.xml, then the server starts as usual
             server.withCopyFileToContainer(MountableFile.forHostPath(driver), "/tmp/postgresql.jar").withCopyFileToContainer(MountableFile.forClasspathResource("wildfly/mcp-datasource.cli"), "/tmp/mcp-datasource.cli");
             server.withCreateContainerCmdModifier(cmd -> cmd.withEntrypoint("/bin/sh", "-c", "/opt/jboss/wildfly/bin/jboss-cli.sh --file=/tmp/mcp-datasource.cli && exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0"));
+        } else if (liberty) {
+            // the file in configDropins/overrides is merged into the shared server.xml
+            server.withCopyFileToContainer(MountableFile.forHostPath(driver), "/opt/ol/wlp/usr/servers/defaultServer/postgresql.jar").withCopyFileToContainer(MountableFile.forClasspathResource("liberty/datasource.xml"), "/opt/ol/wlp/usr/servers/defaultServer/configDropins/overrides/datasource.xml");
         } else {
             server.withCopyFileToContainer(MountableFile.forHostPath(driver), "/opt/payara/libs/postgresql.jar").withCopyFileToContainer(MountableFile.forClasspathResource("payara/preboot.txt"), "/opt/payara/preboot.txt")
                   .withCommand("--deploymentDir", "/opt/payara/deployments", "--addLibs", "/opt/payara/libs/postgresql.jar", "--prebootcommandfile", "/opt/payara/preboot.txt");
