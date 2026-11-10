@@ -5,7 +5,7 @@
     <!-- groupId and Java packages follow the eu.hansolo namespace. -->
     <groupId>eu.hansolo.mcp</groupId>
     <artifactId>jakarta-mcp-server</artifactId>
-    <version>0.7.0</version>
+    <version>0.8.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>Jakarta MCP Server (parent)</name>
