@@ -83,6 +83,7 @@
         <resources.plugin.version>3.5.0</resources.plugin.version>
         <war.plugin.version>3.5.1</war.plugin.version>
         <jar.plugin.version>3.5.1</jar.plugin.version>
+    <enforcer.plugin.version>3.6.1</enforcer.plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -160,15 +161,48 @@
                         <failOnMissingWebXml>false</failOnMissingWebXml>
                     </configuration>
                 </plugin>
+            <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>${enforcer.plugin.version}</version>
+                </plugin>
             </plugins>
         </pluginManagement>
+    <plugins>
+            <!-- Fails fast, with a readable message, on a toolchain this project has not been built with: Maven 3.9.0 or newer (CI and the maintainer use 3.9.x; older
+                 versions were never tried) and JDK 21 or newer (the bytecode level; see maven.compiler.release above). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-toolchain</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.9.0,)</version>
+                                    <message>Maven 3.9.0 or newer is required.</message>
+                                </requireMavenVersion>
+                                <requireJavaVersion>
+                                    <version>[21,)</version>
+                                    <message>JDK 21 or newer is required.</message>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
     <profiles>
         <!--
-          Publishing to Maven Central through the Central Portal:  mvn -Prelease clean deploy -pl .,mcp-jakarta
+          Publishing to Maven Central through the Central Portal:  mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc
           Needs a server "central" in ~/.m2/settings.xml (portal user token) and a GPG key. The upload is not published automatically:
-          check the validated bundle in the portal and press Publish (set autoPublish to true to skip that). Only mcp-jakarta and this
-          parent POM may be uploaded, hence -pl: the plugin bundles every module in the build, and the upload happens after the last one.
+          check the validated bundle in the portal and press Publish (set autoPublish to true to skip that). Only mcp-jakarta, mcp-jakarta-tasks-jdbc and
+          this parent POM may be uploaded, hence -pl: the plugin bundles every module in the build, and the upload happens after the last one.
         -->
         <profile>
             <id>release</id>
