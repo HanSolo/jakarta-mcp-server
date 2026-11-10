@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- **MySQL verified:** `TasksClusterMySqlIT` runs the two-instance cluster scenarios on MySQL 8.4 with MySQL Connector/J (`mysql-connector-j`, in the test fixture only), in addition to PostgreSQL and MariaDB. The `LONGTEXT` columns and inline indexes from 0.7.0 work unchanged. Over a connection without TLS, MySQL 8's `caching_sha2_password` needs `allowPublicKeyRetrieval=true` in the JDBC URL (the IT sets it; in production, use TLS instead).
+
+### Notes
+- **Conformance:** the `tasks-status-notifications` scenario is skipped by the conformance suite itself (it still targets the old POST-SSE channel and waits for a rewrite against `subscriptions/listen`), so it reports 0 checks for every server. `notifications/tasks` is covered by this project's own integration tests.
+
+## 0.7.0 (2026-11.10)
+
+### Added
 - **`scripts/release-check.sh` and a CI job `release-check`:** build the publishable modules with the release profile (sources and Javadoc jars, no signing, no upload), so a Javadoc error fails in CI instead of at the Central upload.
 - **`scripts/client-check/`:** a dependency-free Node client (`check.mjs`) that runs the Tasks flow (create, poll, `input_required`, `tasks/update`, `tasks/cancel`, errors, inline fallback, `subscriptions/listen`) or the MCP Apps checks (`--apps`) against a running example, plus a checklist for MCP Inspector and other clients.
 
