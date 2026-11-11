@@ -77,6 +77,7 @@ class RestartableTasksTest {
         TaskService a = service(3);
         TaskService b = service(3);
         String id = a.create(first(), call()).getString("taskId");
+        awaitRuns(1);
         assertTrue(store.find(id).orElseThrow().restartable());
         assertEquals(1, store.find(id).orElseThrow().attempt());
 
@@ -98,6 +99,7 @@ class RestartableTasksTest {
         TaskService a = service(2);
         TaskService b = service(2);
         String id = a.create(first(), call()).getString("taskId");
+        awaitRuns(1);
         clock.advance(31_000);
         b.sweep();                              // attempt 2 starts and finishes at once
         awaitStatus(id, "completed");
@@ -136,6 +138,7 @@ class RestartableTasksTest {
     void aMaximumOfOneAttemptSwitchesRestartsOff() throws Exception {
         TaskService a = service(1);
         String id = a.create(first(), call()).getString("taskId");
+        awaitRuns(1);
         assertFalse(store.find(id).orElseThrow().restartable());
         hold.countDown();
         a.close();
@@ -146,6 +149,7 @@ class RestartableTasksTest {
         TaskService a = service(3);
         TaskService b = service(3);
         String id = a.create(first(), call()).getString("taskId");
+        awaitRuns(1);
         a.close();
         TaskRecord handed = store.find(id).orElseThrow();
         assertEquals("working", handed.status().wire());
@@ -219,6 +223,7 @@ class RestartableTasksTest {
         TaskConfig config = new TaskConfig(true, 3_600_000L, 2_000L, 1024 * 1024, 100, null, 10_000L, 30_000L, 60_000L, 100L, 60_000L, 2_000L, 3);
         TaskService a = new TaskService(flaky, config, McpRegistry.of(List.of(tool)), clock, Executors.newVirtualThreadPerTaskExecutor());
         String id = a.create(first(), call()).getString("taskId");
+        awaitRuns(1);
         down.set(true);
         a.close();                              // nothing can be written
         down.set(false);
@@ -256,6 +261,15 @@ class RestartableTasksTest {
     private TaskService service(int maxAttempts) {
         TaskConfig config = new TaskConfig(true, 3_600_000L, 2_000L, 1024 * 1024, 100, null, 10_000L, 30_000L, 60_000L, 100L, 60_000L, 2_000L, maxAttempts);
         return new TaskService(store, config, McpRegistry.of(List.of(tool)), clock, Executors.newVirtualThreadPerTaskExecutor());
+    }
+
+    /** The first run is whichever worker counts first, so wait until the original worker has started before another instance takes over. */
+    private void awaitRuns(int count) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline && runs.get() < count) {
+            Thread.sleep(5);
+        }
+        assertTrue(runs.get() >= count, "the worker did not start");
     }
 
     private TaskRecord awaitStatus(String id, String status) throws Exception {
