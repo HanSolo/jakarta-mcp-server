@@ -16,6 +16,9 @@
 - A `double` without a fractional part is written as `5`, not `5.0`, in structured results; a `float` is written with the digits it prints with (`0.1`, not `0.10000000149011612`).
 - The startup error for a task table without the columns of 0.8.0 names them and points to the `ALTER TABLE` statements.
 
+### Removed
+- The 18-argument `TaskRecord` constructor (a record that is not restartable, on its first attempt). Use the canonical constructor, which has `attempt`, `restartable` and `call` before `version` (pass `1, false, null` for the old behavior). Only custom `TaskStore` implementations that built records this way are affected; `TaskRecord.create(...)` is unchanged.
+
 ### Fixed
 
 - A server instance that stops while it runs tasks now ends those tasks as `failed` (non-restartable) or hands them over (restartable) reliably. Before, the task could be written as `cancelled` because the stopping worker raced with `close()`, and a heartbeat that was running during shutdown could extend the lease of a task that had just been handed over.

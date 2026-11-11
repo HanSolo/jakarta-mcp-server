@@ -65,7 +65,7 @@ class JdbcTaskStoreTest {
     @Test
     void aTaskWithoutExpiryAndLeaseKeepsItsNulls() {
         JdbcTaskStore store = store();
-        TaskRecord created = new TaskRecord("t2", "bob", "x", TaskStatus.WORKING, null, T0, T0, null, null, 500L, null, null, null, null, false, null, null, 0L);
+        TaskRecord created = new TaskRecord("t2", "bob", "x", TaskStatus.WORKING, null, T0, T0, null, null, 500L, null, null, null, null, false, null, null, 1, false, null, 0L);
         store.create(created);
         TaskRecord read = store.find("t2").orElseThrow();
         assertEquals(created, read);
@@ -147,7 +147,7 @@ class JdbcTaskStoreTest {
         TaskRecord done = TaskRecord.create("done", "a", "x", T0, 3_000L, 100L, "w", T0.plusSeconds(5));
         store.create(done);
         store.replace(done, done.edit(T0.plusSeconds(1), edit -> edit.status(TaskStatus.COMPLETED)));
-        store.create(new TaskRecord("forever", "a", "x", TaskStatus.WORKING, null, T0, T0, null, null, 100L, null, null, null, null, false, "w", T0.plusSeconds(5), 0L));
+        store.create(new TaskRecord("forever", "a", "x", TaskStatus.WORKING, null, T0, T0, null, null, 100L, null, null, null, null, false, "w", T0.plusSeconds(5), 1, false, null, 0L));
 
         Instant later = T0.plusSeconds(20);
         assertEquals(List.of("forever", "lost").stream().sorted().toList(), store.leaseExpired(later, 10).stream().sorted().toList());

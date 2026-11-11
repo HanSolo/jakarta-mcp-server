@@ -39,16 +39,11 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
         attempt        = Math.max(1, attempt);
     }
 
-    /** A record that is not restartable, on its first attempt. */
-    public TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, long version) {
-        this(id, owner, tool, status, statusMessage, createdAt, lastUpdatedAt, ttlMs, expiresAt, pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, 1, false, null, version);
-    }
-
 
     /** A new task: {@code working}, version 0. */
     public static TaskRecord create(String id, String owner, String tool, Instant now, Long ttlMs, long pollIntervalMs, String workerId, Instant leaseUntil) {
         Instant expiresAt = ttlMs == null ? null : now.plusMillis(ttlMs);
-        return new TaskRecord(id, owner, tool, TaskStatus.WORKING, null, now, now, ttlMs, expiresAt, pollIntervalMs, null, null, null, null, false, workerId, leaseUntil, 0L);
+        return new TaskRecord(id, owner, tool, TaskStatus.WORKING, null, now, now, ttlMs, expiresAt, pollIntervalMs, null, null, null, null, false, workerId, leaseUntil, 1, false, null, 0L);
     }
 
     /** The same task, marked restartable, with the call to run again. */
