@@ -422,6 +422,11 @@ class TaskServiceTest {
         }
 
         @Override
+        public List<String> pollDue(Instant now, int limit) {
+            return inner.pollDue(now, limit);
+        }
+
+        @Override
         public List<String> leaseExpired(Instant now, int limit) {
             return inner.leaseExpired(now, limit);
         }
@@ -447,6 +452,7 @@ class TaskServiceTest {
             @Override public Map<String, TaskRecord> findAll(Collection<String> ids) { findAlls.incrementAndGet(); return TaskStore.super.findAll(ids); }
             @Override public boolean replace(TaskRecord current, TaskRecord next) { return store.replace(current, next); }
             @Override public List<String> leaseExpired(Instant now, int limit) { return store.leaseExpired(now, limit); }
+            @Override public List<String> pollDue(Instant now, int limit) { return store.pollDue(now, limit); }
             @Override public List<String> expired(Instant now, int limit) { return store.expired(now, limit); }
             @Override public void delete(String id) { store.delete(id); }
         };

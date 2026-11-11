@@ -1,6 +1,8 @@
 package eu.hansolo.mcp.server;
 
 import eu.hansolo.mcp.api.Caller;
+import eu.hansolo.mcp.api.ExternalJob;
+import eu.hansolo.mcp.api.ExternalJobStatus;
 import eu.hansolo.mcp.api.InputRequests;
 import eu.hansolo.mcp.api.McpToolHandler;
 import eu.hansolo.mcp.api.ProgressReporter;
@@ -36,6 +38,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -68,6 +71,10 @@ import java.util.logging.Logger;
  * all, and any other task is declared {@code failed}. The store makes the record durable; the execution is repeated only where the task
  * says it may be.
  *
+ * <p>A task that follows an external job ({@link ToolResult.ExternalTask}) has no worker and no lease. Its record carries the job's handle and the time
+ * of the next poll; {@link #pollExternal()} claims a due poll by pushing that time out by one lease, asks the {@link ExternalJob} on the executor, and
+ * writes the outcome only if the claim is still the record's. {@code McpExternalJobs} ends such a task from a callback.
+ *
  * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it, and it can
  * change in any release. Applications should not call it.
  */
@@ -78,6 +85,7 @@ public class TaskService {
     private static final int    MAX_RETRIES = 25;
     private static final int    BATCH       = 100;
     private static final int    MAX_ID      = 128;
+    private static final int    MAX_HANDLE  = 16 * 1024;
 
     private final TaskStore                store;
     private final TaskConfig               config;
@@ -90,6 +98,10 @@ public class TaskService {
     private final Executor                 fixedExecutor;
 
     private Executor                       executor;
+    private volatile Map<String, ExternalJob> jobsByTool;
+    private final java.util.List<ExternalJob> givenJobs;
+    @Inject
+    Instance<ExternalJob>                  discoveredJobs;
     private ExecutorService                ownedExecutor;
     private ScheduledExecutorService       scheduler;
     private final java.util.List<java.util.function.Consumer<String>> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -100,14 +112,20 @@ public class TaskService {
         this(chooseStore(stores, config), config, registry, Clock.systemUTC(), null);
     }
 
-    /** A service with its own store and clock, and optionally its own executor for the work (null: resolve as configured). */
-    public TaskService(TaskStore store, TaskConfig config, McpRegistry registry, Clock clock, Executor executor) {
+    /** A service with its own store, clock and executor and the given followers of external jobs, for code that is built without CDI. */
+    public TaskService(TaskStore store, TaskConfig config, McpRegistry registry, Clock clock, Executor executor, Collection<? extends ExternalJob> jobs) {
+        this.givenJobs     = List.copyOf(jobs);
         this.store         = store;
         this.config        = config;
         this.registry      = registry;
         this.clock         = clock;
         this.fixedExecutor = executor;
         this.slots         = new Semaphore(config.maxRunning());
+    }
+
+    /** A service with its own store and clock, and optionally its own executor for the work (null: resolve as configured). */
+    public TaskService(TaskStore store, TaskConfig config, McpRegistry registry, Clock clock, Executor executor) {
+        this(store, config, registry, clock, executor, List.of());
     }
 
 
@@ -199,6 +217,95 @@ public class TaskService {
             return ToolResult.error("Tool execution failed");
         }
         return outcome;
+    }
+
+    /**
+     * Creates a task that follows a job in another system: starts the job through {@link ToolResult.ExternalTask#start()}, stores the task with
+     * the job's handle and returns the {@code CreateTaskResult}. No thread is kept for the job.
+     */
+    public JsonObject createExternal(ToolResult.ExternalTask task, ToolCall call) {
+        start();
+        ExternalJob job = jobFor(call.name());
+        if (job == null) {
+            LOG.warning("Tool '" + call.name() + "' returned an external task, but no ExternalJob bean names this tool");
+            throw McpProtocolException.internal("The task could not be created");
+        }
+        Instant now  = clock.instant();
+        Long    ttl  = task.noExpiry() ? null : task.ttlMs() != null ? task.ttlMs() : Long.valueOf(config.ttlMs());
+        long    poll = task.pollIntervalMs() != null ? task.pollIntervalMs() : config.pollIntervalMs();
+        String  id   = newId();
+        JsonObject handle;
+        try {
+            handle = task.start().start(id);
+        } catch (McpProtocolException e) {
+            throw e;
+        } catch (Exception e) {
+            LOG.log(Level.WARNING, "Tool '" + call.name() + "' could not start its external job", e);
+            throw McpProtocolException.internal("The job could not be started");
+        }
+        if (handle == null || handle.toString().getBytes(StandardCharsets.UTF_8).length > MAX_HANDLE) {
+            LOG.warning("Tool '" + call.name() + "': the handle of an external job must be a JSON object of at most " + MAX_HANDLE + " bytes");
+            stopQuietly(job, id, handle);
+            throw McpProtocolException.internal("The task could not be created");
+        }
+        TaskRecord record = TaskRecord.createExternal(id, owner(call.caller()), call.name(), now, ttl, poll, handle, now.plusMillis(config.externalPollMs()));
+        try {
+            store.create(record);
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "The task store refused a new task", e);
+            stopQuietly(job, id, handle);
+            throw McpProtocolException.internal("The task could not be created");
+        }
+        return taskFields(record).add("resultType", "task").build();
+    }
+
+    private static void stopQuietly(ExternalJob job, String id, JsonObject handle) {
+        if (handle == null) {
+            return;
+        }
+        try {
+            job.cancel(id, handle);
+        } catch (Exception e) {
+            LOG.log(Level.WARNING, "The external job of task " + abbreviate(id) + " could not be stopped; it may run on without a task", e);
+        }
+    }
+
+    private ExternalJob jobFor(String tool) {
+        Map<String, ExternalJob> map = jobsByTool;
+        if (map == null) {
+            synchronized (this) {
+                map = jobsByTool;
+                if (map == null) {
+                    map = collectJobs();
+                    jobsByTool = map;
+                }
+            }
+        }
+        return map.get(tool);
+    }
+
+    private Map<String, ExternalJob> collectJobs() {
+        Map<String, ExternalJob> found = new LinkedHashMap<>();
+        List<ExternalJob> all = new ArrayList<>(givenJobs);
+        if (discoveredJobs != null) {
+            discoveredJobs.forEach(all::add);
+        }
+        for (ExternalJob job : all) {
+            String tool = job.tool();
+            if (tool == null || tool.isBlank()) {
+                throw new IllegalStateException("ExternalJob " + job.getClass().getName() + " names no tool");
+            }
+            ExternalJob before = found.put(tool, job);
+            if (before != null) {
+                throw new IllegalStateException("Two ExternalJob beans follow the jobs of tool '" + tool + "' (" + before.getClass().getName() + " and " + job.getClass().getName() + ")");
+            }
+        }
+        return found;
+    }
+
+    /** Checks the {@link ExternalJob} beans (one per tool) so that a mistake fails the deployment. */
+    void validateExternalJobs() {
+        jobFor("");
     }
 
     private void run(Running worker, ToolResult.Task task, ToolCall call) {
@@ -364,6 +471,16 @@ public class TaskService {
     /** {@code tasks/cancel}: asks the work to stop. The task becomes {@code cancelled} when the work notices; it may also finish regardless. */
     public void cancel(String taskId, Caller caller) {
         TaskRecord rec = lookup(taskId, caller);
+        if (rec.external()) {
+            // nothing runs this task: the job is stopped by a poll that is due at once
+            mutate(rec.id(), current -> current.status().isTerminal() ? null : current.edit(clock.instant(), edit -> edit.cancelRequested(true).nextPollAt(clock.instant())));
+            try {
+                executor().execute(() -> claimAndPoll(rec.id(), clock.instant()));
+            } catch (RejectedExecutionException e) {
+                LOG.log(Level.FINE, "Could not start the cancellation of task " + abbreviate(rec.id()) + " now; the next poll does it", e);
+            }
+            return;
+        }
         mutate(rec.id(), current -> current.status().isTerminal() || current.cancelRequested() ? null : current.edit(clock.instant(), edit -> edit.cancelRequested(true)));
         Running worker = running.get(rec.id());
         if (worker != null) {
@@ -384,6 +501,162 @@ public class TaskService {
         return rec.owner().equals(owner(caller))
                && (rec.expiresAt() == null || rec.expiresAt().isAfter(now))
                && registry.find(rec.tool()).map(tool -> Scopes.satisfiesAll(caller.scopes(), tool.requiredScopes())).orElse(true);
+    }
+
+
+    // ---- external jobs ----
+
+    /** Asks about the jobs that are due. Runs on a timer; public for tests. The questions themselves run on the task executor, not on the timer thread. */
+    public void pollExternal() {
+        try {
+            Instant now = clock.instant();
+            for (String id : store.pollDue(now, BATCH)) {
+                try {
+                    claimAndPoll(id, now);
+                } catch (RuntimeException e) {
+                    LOG.log(Level.WARNING, "Could not poll the job of task " + abbreviate(id), e);
+                }
+            }
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "The poll of external jobs failed", e);
+        }
+    }
+
+    /**
+     * Takes the poll of one task by moving its next poll out by a lease, so that no other instance asks at the same time, and runs it on the
+     * executor. If this instance stops, the lease runs out and another one asks.
+     */
+    private void claimAndPoll(String id, Instant now) {
+        Instant[] token = new Instant[1];
+        Optional<TaskRecord> after = mutate(id, rec -> {
+            token[0] = null;
+            if (!rec.external() || rec.nextPollAt() == null || rec.nextPollAt().isAfter(now)) {
+                return null;
+            }
+            token[0] = now.plusMillis(config.leaseMs()).truncatedTo(ChronoUnit.MILLIS);   // a store keeps milliseconds, and the token is compared with what it gives back
+            return rec.edit(now, false, edit -> edit.nextPollAt(token[0]));
+        });
+        if (token[0] == null || after.isEmpty()) {
+            return;
+        }
+        TaskRecord claimed = after.get();
+        Instant    mine    = token[0];
+        try {
+            executor().execute(() -> pollOne(claimed, mine));
+        } catch (RejectedExecutionException e) {
+            LOG.log(Level.WARNING, "The executor refused the poll of task " + abbreviate(id) + "; it is asked again when the claim runs out", e);
+        }
+    }
+
+    private void pollOne(TaskRecord rec, Instant token) {
+        String id = rec.id();
+        try {
+            ExternalJob job = jobFor(rec.tool());
+            if (job == null) {
+                endExternal(id, token, cur -> cur.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "No ExternalJob follows the jobs of this tool any more"))));
+                return;
+            }
+            if (rec.cancelRequested()) {
+                try {
+                    job.cancel(id, rec.handle());
+                } catch (Exception e) {
+                    pollFailed(rec, token, e);
+                    return;
+                }
+                endExternal(id, token, cur -> cur.edit(clock.instant(), edit -> edit.status(TaskStatus.CANCELLED)));
+                return;
+            }
+            ExternalJobStatus status;
+            try {
+                status = job.poll(id, rec.handle());
+            } catch (Exception e) {
+                pollFailed(rec, token, e);
+                return;
+            }
+            switch (status) {
+                case ExternalJobStatus.Completed completed -> {
+                    JsonObject result = McpRequestHandler.toResult(completed.result());
+                    if (result.toString().getBytes(StandardCharsets.UTF_8).length > config.maxResultBytes()) {
+                        endExternal(id, token, cur -> cur.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The result is larger than mcp.tasks.max-result-bytes (" + config.maxResultBytes() + ")"))));
+                    } else {
+                        endExternal(id, token, cur -> cur.edit(clock.instant(), edit -> edit.status(TaskStatus.COMPLETED).result(result)));
+                    }
+                }
+                case ExternalJobStatus.Failed failed -> endExternal(id, token, cur -> cur.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, failed.message()))));
+                case ExternalJobStatus.Running still -> {
+                    long delay = Math.max(config.externalPollMs(), still.retryAfterMs() == null ? 0L : still.retryAfterMs());
+                    endExternal(id, token, cur -> {
+                        Instant now     = clock.instant();
+                        boolean message = still.message() != null && !still.message().equals(cur.statusMessage());
+                        return cur.edit(now, message, edit -> {
+                            edit.nextPollAt(now.plusMillis(delay)).pollFailures(0);
+                            if (message) {
+                                edit.statusMessage(still.message());
+                            }
+                        });
+                    });
+                }
+            }
+        } catch (RuntimeException | Error e) {
+            LOG.log(Level.WARNING, "Polling the job of task " + abbreviate(id) + " went wrong; the poll is repeated when its claim runs out", e);
+        }
+    }
+
+    private void pollFailed(TaskRecord rec, Instant token, Exception cause) {
+        LOG.log(Level.WARNING, "Could not ask about the job of task " + abbreviate(rec.id()) + " (tool '" + rec.tool() + "'), failure " + (rec.pollFailures() + 1) + " of " + config.externalMaxFailures(), cause);
+        endExternal(rec.id(), token, cur -> {
+            Instant now      = clock.instant();
+            int     failures = cur.pollFailures() + 1;
+            if (failures >= config.externalMaxFailures()) {
+                return cur.edit(now, edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The external job could not be reached")));
+            }
+            return cur.edit(now, false, edit -> edit.pollFailures(failures).nextPollAt(now.plusMillis(config.externalPollMs())));
+        });
+    }
+
+    /** Applies the outcome of a poll, unless the task has ended, or was claimed anew (a cancellation, or this poll took longer than its claim). */
+    private void endExternal(String id, Instant token, UnaryOperator<TaskRecord> change) {
+        mutate(id, rec -> rec.status().isTerminal() || !rec.external() || !token.equals(rec.nextPollAt()) ? null : change.apply(rec));
+    }
+
+    /**
+     * A callback from the other system says the job is done. Returns false if the task is unknown, not following a job, or already ended. The
+     * caller is the application's own endpoint, which has to authenticate the other system.
+     */
+    boolean completeExternal(String taskId, ToolResult.Complete complete) {
+        JsonObject result = McpRequestHandler.toResult(complete);
+        boolean tooLarge  = result.toString().getBytes(StandardCharsets.UTF_8).length > config.maxResultBytes();
+        return callback(taskId, rec -> tooLarge
+                ? rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The result is larger than mcp.tasks.max-result-bytes (" + config.maxResultBytes() + ")")))
+                : rec.edit(clock.instant(), edit -> edit.status(TaskStatus.COMPLETED).result(result)));
+    }
+
+    /** A callback says the job failed. See {@link #completeExternal}. */
+    boolean failExternal(String taskId, String message) {
+        String text = message == null || message.isBlank() ? "The job failed" : message;
+        return callback(taskId, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, text))));
+    }
+
+    /** A callback reports progress: sets the status message. See {@link #completeExternal}. */
+    boolean progressExternal(String taskId, String message) {
+        return callback(taskId, rec -> message == null || message.equals(rec.statusMessage()) ? null : rec.edit(clock.instant(), edit -> edit.statusMessage(message)));
+    }
+
+    private boolean callback(String taskId, UnaryOperator<TaskRecord> change) {
+        if (taskId == null || taskId.length() > MAX_ID) {
+            return false;
+        }
+        boolean[] applied = new boolean[1];
+        mutate(taskId, rec -> {
+            applied[0] = false;
+            if (!rec.external()) {
+                return null;
+            }
+            TaskRecord next = change.apply(rec);
+            applied[0] = next != null;
+            return next;
+        });
+        return applied[0];
     }
 
 
@@ -467,6 +740,7 @@ public class TaskService {
         });
         scheduler.scheduleWithFixedDelay(this::heartbeat, config.heartbeatMs(), config.heartbeatMs(), TimeUnit.MILLISECONDS);
         scheduler.scheduleWithFixedDelay(this::sweep, config.sweepMs(), config.sweepMs(), TimeUnit.MILLISECONDS);
+        scheduler.scheduleWithFixedDelay(this::pollExternal, config.externalPollMs(), config.externalPollMs(), TimeUnit.MILLISECONDS);
     }
 
     private synchronized Executor executor() {

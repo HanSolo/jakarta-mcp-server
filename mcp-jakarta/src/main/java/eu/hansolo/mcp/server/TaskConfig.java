@@ -23,6 +23,9 @@ import jakarta.inject.Singleton;
  *       made on other instances (default 2000); changes made on this instance are sent at once.</li>
  *   <li>{@code mcp.tasks.max-attempts}: how many times a restartable task is run at most, the first run included (default 3). 1 switches
  *       restarts off.</li>
+ *   <li>{@code mcp.tasks.external-poll-ms}: how often a task that follows a job in another system ({@code ToolResult.externalTask}) asks about the job,
+ *       and when it asks for the first time (default 5000). One of the instances does it each time. A poll can ask for a different delay.</li>
+ *   <li>{@code mcp.tasks.external-max-failures}: how many polls (or cancel calls) in a row may fail before the task is declared failed (default 5).</li>
  * </ul>
  *
  * <p><b>Internal class, stable settings.</b> The settings below are part of the stable configuration; the class that reads them is not,
@@ -44,10 +47,12 @@ public class TaskConfig {
     private final long    inputTimeoutMs;
     private final long    notifyPollMs;
     private final int     maxAttempts;
+    private final long    externalPollMs;
+    private final int     externalMaxFailures;
 
 
     public TaskConfig() {
-        this(Settings.getBoolean("mcp.tasks.enabled", false), Settings.getLong("mcp.tasks.ttl-ms", 3_600_000L), Settings.getLong("mcp.tasks.poll-interval-ms", 2_000L), Settings.getInt("mcp.tasks.max-result-bytes", 1024 * 1024), Settings.getInt("mcp.tasks.max-running", 100), Settings.get("mcp.tasks.executor"), Settings.getLong("mcp.tasks.heartbeat-ms", 10_000L), Settings.getLong("mcp.tasks.lease-ms", 30_000L), Settings.getLong("mcp.tasks.sweep-ms", 30_000L), Settings.getLong("mcp.tasks.input-poll-ms", 500L), Settings.getLong("mcp.tasks.input-timeout-ms", 3_600_000L), Settings.getLong("mcp.tasks.notify-poll-ms", 2_000L), Settings.getInt("mcp.tasks.max-attempts", 3));
+        this(Settings.getBoolean("mcp.tasks.enabled", false), Settings.getLong("mcp.tasks.ttl-ms", 3_600_000L), Settings.getLong("mcp.tasks.poll-interval-ms", 2_000L), Settings.getInt("mcp.tasks.max-result-bytes", 1024 * 1024), Settings.getInt("mcp.tasks.max-running", 100), Settings.get("mcp.tasks.executor"), Settings.getLong("mcp.tasks.heartbeat-ms", 10_000L), Settings.getLong("mcp.tasks.lease-ms", 30_000L), Settings.getLong("mcp.tasks.sweep-ms", 30_000L), Settings.getLong("mcp.tasks.input-poll-ms", 500L), Settings.getLong("mcp.tasks.input-timeout-ms", 3_600_000L), Settings.getLong("mcp.tasks.notify-poll-ms", 2_000L), Settings.getInt("mcp.tasks.max-attempts", 3), Settings.getLong("mcp.tasks.external-poll-ms", 5_000L), Settings.getInt("mcp.tasks.external-max-failures", 5));
     }
 
     public TaskConfig(boolean enabled, long ttlMs, long pollIntervalMs, int maxResultBytes, int maxRunning, String executor, long heartbeatMs, long leaseMs, long sweepMs, long inputPollMs, long inputTimeoutMs) {
@@ -59,6 +64,12 @@ public class TaskConfig {
     }
 
     public TaskConfig(boolean enabled, long ttlMs, long pollIntervalMs, int maxResultBytes, int maxRunning, String executor, long heartbeatMs, long leaseMs, long sweepMs, long inputPollMs, long inputTimeoutMs, long notifyPollMs, int maxAttempts) {
+        this(enabled, ttlMs, pollIntervalMs, maxResultBytes, maxRunning, executor, heartbeatMs, leaseMs, sweepMs, inputPollMs, inputTimeoutMs, notifyPollMs, maxAttempts, 5_000L, 5);
+    }
+
+    public TaskConfig(boolean enabled, long ttlMs, long pollIntervalMs, int maxResultBytes, int maxRunning, String executor, long heartbeatMs, long leaseMs, long sweepMs, long inputPollMs, long inputTimeoutMs, long notifyPollMs, int maxAttempts, long externalPollMs, int externalMaxFailures) {
+        this.externalPollMs      = Math.max(10L, externalPollMs);
+        this.externalMaxFailures = Math.max(1, externalMaxFailures);
         this.maxAttempts    = Math.max(1, maxAttempts);
         this.notifyPollMs   = Math.max(20L, notifyPollMs);
         this.enabled        = enabled;
@@ -78,6 +89,16 @@ public class TaskConfig {
     /** The defaults with the extension switched on. */
     public static TaskConfig enabled() {
         return new TaskConfig(true, 3_600_000L, 2_000L, 1024 * 1024, 100, null, 10_000L, 30_000L, 30_000L, 500L, 3_600_000L);
+    }
+
+    /** How often a task that follows an external job asks about it, and the delay before the first question. */
+    public long externalPollMs() {
+        return externalPollMs;
+    }
+
+    /** How many polls in a row may fail before the task fails. */
+    public int externalMaxFailures() {
+        return externalMaxFailures;
     }
 
     public boolean isEnabled() {

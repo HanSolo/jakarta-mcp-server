@@ -66,6 +66,12 @@ public interface TaskStore {
     /** Ids of non-terminal tasks whose lease ended before {@code now}: their worker is gone. At most {@code limit}. */
     List<String> leaseExpired(Instant now, int limit);
 
+    /**
+     * Ids of non-terminal tasks that follow an external job and are due for a poll: {@code nextPollAt} is set and not after {@code now}. At most
+     * {@code limit}, the longest overdue first if the store can order them.
+     */
+    List<String> pollDue(Instant now, int limit);
+
     /** Ids of tasks whose {@code expiresAt} is not after {@code now}. At most {@code limit}. */
     List<String> expired(Instant now, int limit);
 

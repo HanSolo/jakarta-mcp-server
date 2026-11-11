@@ -202,6 +202,11 @@ class RestartableTasksTest {
             }
 
             @Override
+            public List<String> pollDue(Instant now, int limit) {
+                return store.pollDue(now, limit);
+            }
+
+            @Override
             public List<String> expired(Instant now, int limit) {
                 return store.expired(now, limit);
             }

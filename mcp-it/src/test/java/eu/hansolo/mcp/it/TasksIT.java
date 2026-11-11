@@ -27,7 +27,7 @@ class TasksIT {
     @BeforeAll
     static void start() {
         Assumptions.assumeTrue(ServerFixture.dockerAvailable(), "Docker is not available: skipping integration tests");
-        container = ServerFixture.create(ServerFixture.fixtureWar(), Map.of("MCP_TASKS_ENABLED", "true"), false);
+        container = ServerFixture.create(ServerFixture.fixtureWar(), Map.of("MCP_TASKS_ENABLED", "true", "MCP_TASKS_EXTERNAL_POLL_MS", "300"), false);
         container.start();
         client = new McpClient(container.getHost(), container.getMappedPort(ServerFixture.httpPort()));
         ServerFixture.awaitDeployed(container, client);
@@ -76,6 +76,47 @@ class TasksIT {
         throw new AssertionError("Task never reached " + status + "; last seen: " + last);
     }
 
+
+    private static String startExternal(long millis) throws Exception {
+        McpClient.Reply reply = rpc("tools/call", "external_demo", Json.createObjectBuilder().add("name", "external_demo").add("arguments", Json.createObjectBuilder().add("millis", millis)), true, "external_demo");
+        assertEquals(200, reply.status(), reply.body());
+        JsonObject result = reply.json().getJsonObject("result");
+        assertEquals("task", result.getString("resultType"), reply.body());
+        return result.getString("taskId");
+    }
+
+    @Test
+    void aTaskThatFollowsAnExternalJobIsPolledToItsResultWithoutAWorker() throws Exception {
+        String id = startExternal(1500);
+        JsonObject working = get(id);
+        assertEquals("working", working.getString("status"));
+        assertFalse(working.toString().contains("readyAt"), "the handle stays on the server");
+        JsonObject done = awaitStatus(id, "completed");
+        assertEquals("external job finished", done.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+    }
+
+    @Test
+    void aCallbackEndsAnExternalTaskAtOnceAndOnlyOnce() throws Exception {
+        String id = startExternal(3_600_000);
+        assertEquals("working", get(id).getString("status"));
+        assertEquals(204, client.request("POST", "/admin/external/" + id + "/complete", null).status());
+        JsonObject done = awaitStatus(id, "completed");
+        assertEquals("completed by callback", done.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+        assertEquals(404, client.request("POST", "/admin/external/" + id + "/complete", null).status(), "the task is over");
+        assertEquals(404, client.request("POST", "/admin/external/nope/fail", null).status());
+    }
+
+    @Test
+    void cancellingAnExternalTaskEndsItAndAClientWithoutTheExtensionIsRefused() throws Exception {
+        String id = startExternal(3_600_000);
+        McpClient.Reply ack = rpc("tasks/cancel", id, Json.createObjectBuilder().add("taskId", id), true, id);
+        assertEquals(200, ack.status(), ack.body());
+        awaitStatus(id, "cancelled");
+
+        McpClient.Reply refused = rpc("tools/call", "external_demo", Json.createObjectBuilder().add("name", "external_demo").add("arguments", Json.createObjectBuilder().add("millis", 10)), false, "external_demo");
+        assertEquals(400, refused.status(), refused.body());
+        assertEquals(-32021, refused.json().getJsonObject("error").getInt("code"));
+    }
 
     @Test
     void discoverAnnouncesTheExtension() throws Exception {

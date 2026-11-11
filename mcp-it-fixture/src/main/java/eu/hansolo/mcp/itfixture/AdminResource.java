@@ -11,7 +11,9 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.server.McpChange;
+import eu.hansolo.mcp.server.McpExternalJobs;
 import eu.hansolo.mcp.server.McpNotifications;
 import eu.hansolo.mcp.server.McpRegistrations;
 
@@ -25,6 +27,7 @@ public class AdminResource {
     @Inject McpRegistrations registrations;
     @Inject McpNotifications notifications;
     @Inject JmsTestBridge jms;
+    @Inject McpExternalJobs externalJobs;
 
 
     /** Adds a tool with this name that answers "hello from <name>". 409 if the name is taken. */
@@ -65,6 +68,19 @@ public class AdminResource {
         } catch (IllegalArgumentException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
         }
+    }
+
+    /** The callback of an external job: 204 if it ended the task, 404 if the task is unknown or already over. */
+    @POST
+    @Path("/external/{taskId}/complete")
+    public Response completeExternal(@PathParam("taskId") String taskId) {
+        return externalJobs.complete(taskId, ToolResult.text("completed by callback")) ? Response.noContent().build() : Response.status(Response.Status.NOT_FOUND).build();
+    }
+
+    @POST
+    @Path("/external/{taskId}/fail")
+    public Response failExternal(@PathParam("taskId") String taskId) {
+        return externalJobs.fail(taskId, "failed by callback") ? Response.noContent().build() : Response.status(Response.Status.NOT_FOUND).build();
     }
 
     /** Waits (up to 30 s) until the JMS bridge holds its subscription; {@code configured} is false when MCP_IT_JMS_URL is unset. */

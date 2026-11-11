@@ -53,12 +53,16 @@ import java.util.regex.Pattern;
  * {@code mcp.tasks.jdbc.create-schema=true} to have it created at startup (PostgreSQL and H2; elsewhere run the DDL yourself).
  * {@code mcp.tasks.jdbc.table} renames the table (default {@code mcp_tasks}).
  *
- * <p><b>Upgrading from 0.7.0:</b> 0.8.0 adds three columns, which {@code create-schema} does not add to an existing table. Run once (use
- * {@code LONGTEXT} for {@code call_json} on MariaDB and MySQL, {@code CLOB} on H2; {@code table} is your table name):
+ * <p><b>Upgrading:</b> {@code create-schema} does not add columns to an existing table. From 0.7.0 run all of these statements, from 0.8.0 only the last four
+ * (use {@code LONGTEXT} instead of {@code TEXT} on MariaDB and MySQL, {@code CLOB} on H2; {@code table} is your table name):
  * <pre>
  * ALTER TABLE table ADD COLUMN attempt_no INT NOT NULL DEFAULT 1;
  * ALTER TABLE table ADD COLUMN restartable BOOLEAN NOT NULL DEFAULT FALSE;
  * ALTER TABLE table ADD COLUMN call_json TEXT;
+ * ALTER TABLE table ADD COLUMN handle_json TEXT;
+ * ALTER TABLE table ADD COLUMN next_poll_at BIGINT;
+ * ALTER TABLE table ADD COLUMN poll_failures INT NOT NULL DEFAULT 0;
+ * CREATE INDEX table_poll ON table (next_poll_at);
  * </pre>
  *
  * <p>Times are stored as epoch milliseconds, JSON as text. The statements use no vendor features, so other databases that accept
@@ -69,7 +73,7 @@ public class JdbcTaskStore implements TaskStore {
 
     private static final Logger  LOG   = Logger.getLogger(JdbcTaskStore.class.getName());
     private static final Pattern TABLE = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
-    private static final String  COLUMNS = "id, owner_subject, tool, status, status_message, created_at, last_updated_at, ttl_ms, expires_at, poll_interval_ms, result_json, error_json, input_requests_json, input_responses_json, cancel_requested, worker_id, lease_until, attempt_no, restartable, call_json, version_no";
+    private static final String  COLUMNS = "id, owner_subject, tool, status, status_message, created_at, last_updated_at, ttl_ms, expires_at, poll_interval_ms, result_json, error_json, input_requests_json, input_responses_json, cancel_requested, worker_id, lease_until, attempt_no, restartable, call_json, version_no, handle_json, next_poll_at, poll_failures";
 
     private final String  jndiName;
     private final String  url;
@@ -143,7 +147,7 @@ public class JdbcTaskStore implements TaskStore {
         try (Connection connection = dataSource().getConnection(); Statement statement = connection.createStatement(); ResultSet ignored = statement.executeQuery("SELECT " + COLUMNS + " FROM " + table + " WHERE 1 = 0")) {
             // the table exists and has the columns
         } catch (SQLException e) {
-            throw new IllegalStateException("The task table '" + table + "' cannot be read (" + e.getMessage() + "). Create it with JdbcTaskStore.ddl(...) or set mcp.tasks.jdbc.create-schema=true. A table made by 0.7.0 first needs the columns attempt_no, restartable and call_json (ALTER TABLE statements in the class documentation and the CHANGELOG)", e);
+            throw new IllegalStateException("The task table '" + table + "' cannot be read (" + e.getMessage() + "). Create it with JdbcTaskStore.ddl(...) or set mcp.tasks.jdbc.create-schema=true. A table made by an earlier version first needs the new columns (ALTER TABLE statements in the class documentation and the CHANGELOG)", e);
         }
     }
 
@@ -161,13 +165,14 @@ public class JdbcTaskStore implements TaskStore {
      */
     public static List<String> ddl(String table, String textType, boolean inlineIndexes) {
         checkTable(table);
-        String columns = "id VARCHAR(64) PRIMARY KEY, owner_subject VARCHAR(512) NOT NULL, tool VARCHAR(256) NOT NULL, status VARCHAR(16) NOT NULL, status_message VARCHAR(2048), created_at BIGINT NOT NULL, last_updated_at BIGINT NOT NULL, ttl_ms BIGINT, expires_at BIGINT, poll_interval_ms BIGINT NOT NULL, result_json " + textType + ", error_json " + textType + ", input_requests_json " + textType + " NOT NULL, input_responses_json " + textType + " NOT NULL, cancel_requested BOOLEAN NOT NULL, worker_id VARCHAR(64), lease_until BIGINT, attempt_no INT NOT NULL DEFAULT 1, restartable BOOLEAN NOT NULL DEFAULT FALSE, call_json " + textType + ", version_no BIGINT NOT NULL";
+        String columns = "id VARCHAR(64) PRIMARY KEY, owner_subject VARCHAR(512) NOT NULL, tool VARCHAR(256) NOT NULL, status VARCHAR(16) NOT NULL, status_message VARCHAR(2048), created_at BIGINT NOT NULL, last_updated_at BIGINT NOT NULL, ttl_ms BIGINT, expires_at BIGINT, poll_interval_ms BIGINT NOT NULL, result_json " + textType + ", error_json " + textType + ", input_requests_json " + textType + " NOT NULL, input_responses_json " + textType + " NOT NULL, cancel_requested BOOLEAN NOT NULL, worker_id VARCHAR(64), lease_until BIGINT, attempt_no INT NOT NULL DEFAULT 1, restartable BOOLEAN NOT NULL DEFAULT FALSE, call_json " + textType + ", version_no BIGINT NOT NULL, handle_json " + textType + ", next_poll_at BIGINT, poll_failures INT NOT NULL DEFAULT 0";
         if (inlineIndexes) {
-            return List.of("CREATE TABLE IF NOT EXISTS " + table + " (" + columns + ", INDEX " + table + "_lease (lease_until), INDEX " + table + "_expires (expires_at))");
+            return List.of("CREATE TABLE IF NOT EXISTS " + table + " (" + columns + ", INDEX " + table + "_lease (lease_until), INDEX " + table + "_expires (expires_at), INDEX " + table + "_poll (next_poll_at))");
         }
         return List.of("CREATE TABLE IF NOT EXISTS " + table + " (" + columns + ")",
                        "CREATE INDEX IF NOT EXISTS " + table + "_lease ON " + table + " (lease_until)",
-                       "CREATE INDEX IF NOT EXISTS " + table + "_expires ON " + table + " (expires_at)");
+                       "CREATE INDEX IF NOT EXISTS " + table + "_expires ON " + table + " (expires_at)",
+                       "CREATE INDEX IF NOT EXISTS " + table + "_poll ON " + table + " (next_poll_at)");
     }
 
     private void createSchema() {
@@ -180,7 +185,7 @@ public class JdbcTaskStore implements TaskStore {
                 statement.execute(sql);
             }
         } catch (SQLException e) {
-            throw failure("Could not create the task table", e);
+            throw new IllegalStateException("Could not create the task table (" + e.getMessage() + "). A table made by an earlier version first needs the new columns (ALTER TABLE statements in the class documentation and the CHANGELOG)", e);
         }
     }
 
@@ -375,7 +380,7 @@ public class JdbcTaskStore implements TaskStore {
 
     @Override
     public void create(TaskRecord task) {
-        String sql = "INSERT INTO " + table + " (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO " + table + " (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = dataSource().getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, task.id());
             statement.setString(2, task.owner());
@@ -397,6 +402,9 @@ public class JdbcTaskStore implements TaskStore {
             statement.setBoolean(19, task.restartable());
             statement.setString(20, json(task.call()));
             statement.setLong(21, task.version());
+            statement.setString(22, json(task.handle()));
+            setLong(statement, 23, task.nextPollAt() == null ? null : task.nextPollAt().toEpochMilli());
+            statement.setInt(24, task.pollFailures());
             statement.executeUpdate();
         } catch (SQLException e) {
             if (e.getSQLState() != null && e.getSQLState().startsWith("23")) {
@@ -466,7 +474,7 @@ public class JdbcTaskStore implements TaskStore {
         if (next.version() != current.version() + 1 || !next.id().equals(current.id())) {
             throw new IllegalArgumentException("next must be the successor of current");
         }
-        String sql = "UPDATE " + table + " SET status = ?, status_message = ?, last_updated_at = ?, result_json = ?, error_json = ?, input_requests_json = ?, input_responses_json = ?, cancel_requested = ?, worker_id = ?, lease_until = ?, attempt_no = ?, version_no = ? WHERE id = ? AND version_no = ?";
+        String sql = "UPDATE " + table + " SET status = ?, status_message = ?, last_updated_at = ?, result_json = ?, error_json = ?, input_requests_json = ?, input_responses_json = ?, cancel_requested = ?, worker_id = ?, lease_until = ?, attempt_no = ?, version_no = ?, handle_json = ?, next_poll_at = ?, poll_failures = ? WHERE id = ? AND version_no = ?";
         try (Connection connection = dataSource().getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             bindMutable(statement, next, 1);
             statement.setLong(3, next.lastUpdatedAt().toEpochMilli());
@@ -479,8 +487,11 @@ public class JdbcTaskStore implements TaskStore {
             setLong(statement, 10, next.leaseUntil() == null ? null : next.leaseUntil().toEpochMilli());
             statement.setInt(11, next.attempt());
             statement.setLong(12, next.version());
-            statement.setString(13, current.id());
-            statement.setLong(14, current.version());
+            statement.setString(13, json(next.handle()));
+            setLong(statement, 14, next.nextPollAt() == null ? null : next.nextPollAt().toEpochMilli());
+            statement.setInt(15, next.pollFailures());
+            statement.setString(16, current.id());
+            statement.setLong(17, current.version());
             return statement.executeUpdate() == 1;
         } catch (SQLException e) {
             throw failure("Could not update a task", e);
@@ -490,6 +501,11 @@ public class JdbcTaskStore implements TaskStore {
     @Override
     public List<String> leaseExpired(Instant now, int limit) {
         return ids("SELECT id FROM " + table + " WHERE status IN ('" + TaskStatus.WORKING.wire() + "', '" + TaskStatus.INPUT_REQUIRED.wire() + "') AND lease_until IS NOT NULL AND lease_until < ?", now, limit);
+    }
+
+    @Override
+    public List<String> pollDue(Instant now, int limit) {
+        return ids("SELECT id FROM " + table + " WHERE status IN ('" + TaskStatus.WORKING.wire() + "', '" + TaskStatus.INPUT_REQUIRED.wire() + "') AND next_poll_at IS NOT NULL AND next_poll_at <= ? ORDER BY next_poll_at", now, limit);
     }
 
     @Override
@@ -531,7 +547,9 @@ public class JdbcTaskStore implements TaskStore {
         Instant expiresAt = rows.wasNull() ? null : Instant.ofEpochMilli(expires);
         long lease = rows.getLong(17);
         Instant leaseUntil = rows.wasNull() ? null : Instant.ofEpochMilli(lease);
-        return new TaskRecord(rows.getString(1), rows.getString(2), rows.getString(3), TaskStatus.fromWire(rows.getString(4)), rows.getString(5), Instant.ofEpochMilli(rows.getLong(6)), Instant.ofEpochMilli(rows.getLong(7)), ttlMs, expiresAt, rows.getLong(10), object(rows.getString(11)), object(rows.getString(12)), object(rows.getString(13)), object(rows.getString(14)), rows.getBoolean(15), rows.getString(16), leaseUntil, rows.getInt(18), rows.getBoolean(19), object(rows.getString(20)), rows.getLong(21));
+        long poll = rows.getLong(23);
+        Instant nextPoll = rows.wasNull() ? null : Instant.ofEpochMilli(poll);
+        return new TaskRecord(rows.getString(1), rows.getString(2), rows.getString(3), TaskStatus.fromWire(rows.getString(4)), rows.getString(5), Instant.ofEpochMilli(rows.getLong(6)), Instant.ofEpochMilli(rows.getLong(7)), ttlMs, expiresAt, rows.getLong(10), object(rows.getString(11)), object(rows.getString(12)), object(rows.getString(13)), object(rows.getString(14)), rows.getBoolean(15), rows.getString(16), leaseUntil, rows.getInt(18), rows.getBoolean(19), object(rows.getString(20)), object(rows.getString(22)), nextPoll, rows.getInt(24), rows.getLong(21));
     }
 
     private static void setLong(PreparedStatement statement, int index, Long value) throws SQLException {

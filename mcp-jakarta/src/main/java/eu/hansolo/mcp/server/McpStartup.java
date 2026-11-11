@@ -31,6 +31,7 @@ public class McpStartup {
         }
         if (tasks.enabled()) {
             tasks.start();
+            tasks.validateExternalJobs();
             tasks.onChange(notifications::taskChanged);
             if (tasks.usesMemoryStore()) {
                 LOG.warning("The Tasks extension is on and tasks are kept in memory: they are lost when this server stops and other instances cannot see them. Provide a TaskStore bean (see the mcp-jakarta-tasks-jdbc module) for anything beyond a single instance.");

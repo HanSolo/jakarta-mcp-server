@@ -29,26 +29,46 @@ import java.util.function.Consumer;
  * @param attempt         which run of the work this is, starting at 1; grows when another instance restarts the task
  * @param restartable     true if the task may be run again from the start when its worker is lost
  * @param call            the stored tool call ({@code arguments}, {@code caller}, {@code clientCapabilities}, {@code clientInfo}) of a restartable task; otherwise null
+ * @param handle          the handle of the external job that this task follows (see {@link #external()}), or null; cleared when the task ends,
+ *                        because it may hold credentials for the other system
+ * @param nextPollAt      when the server next asks the external system about the job, or null; while a poll is under way it is pushed out,
+ *                        so that the other instances leave the task alone
+ * @param pollFailures    how many polls in a row have failed
  * @param version         starts at 0, grows by one with every change
  */
-public record TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, int attempt, boolean restartable, JsonObject call, long version) {
+public record TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, int attempt, boolean restartable, JsonObject call, JsonObject handle, Instant nextPollAt, int pollFailures, long version) {
 
     public TaskRecord {
         inputRequests  = inputRequests == null ? JsonObject.EMPTY_JSON_OBJECT : inputRequests;
         inputResponses = inputResponses == null ? JsonObject.EMPTY_JSON_OBJECT : inputResponses;
         attempt        = Math.max(1, attempt);
+        pollFailures   = Math.max(0, pollFailures);
     }
 
 
     /** A new task: {@code working}, version 0. */
     public static TaskRecord create(String id, String owner, String tool, Instant now, Long ttlMs, long pollIntervalMs, String workerId, Instant leaseUntil) {
         Instant expiresAt = ttlMs == null ? null : now.plusMillis(ttlMs);
-        return new TaskRecord(id, owner, tool, TaskStatus.WORKING, null, now, now, ttlMs, expiresAt, pollIntervalMs, null, null, null, null, false, workerId, leaseUntil, 1, false, null, 0L);
+        return new TaskRecord(id, owner, tool, TaskStatus.WORKING, null, now, now, ttlMs, expiresAt, pollIntervalMs, null, null, null, null, false, workerId, leaseUntil, 1, false, null, null, null, 0, 0L);
     }
 
     /** The same task, marked restartable, with the call to run again. */
     public TaskRecord restartable(JsonObject call) {
-        return new TaskRecord(id, owner, tool, status, statusMessage, createdAt, lastUpdatedAt, ttlMs, expiresAt, pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, attempt, true, call, version);
+        return new TaskRecord(id, owner, tool, status, statusMessage, createdAt, lastUpdatedAt, ttlMs, expiresAt, pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, attempt, true, call, handle, nextPollAt, pollFailures, version);
+    }
+
+    /**
+     * A new task that follows a job in another system: {@code working}, with no worker and no lease. The server polls the job from
+     * {@code firstPollAt} on, and the task ends when the poll or a callback says so.
+     */
+    public static TaskRecord createExternal(String id, String owner, String tool, Instant now, Long ttlMs, long pollIntervalMs, JsonObject handle, Instant firstPollAt) {
+        Instant expiresAt = ttlMs == null ? null : now.plusMillis(ttlMs);
+        return new TaskRecord(id, owner, tool, TaskStatus.WORKING, null, now, now, ttlMs, expiresAt, pollIntervalMs, null, null, null, null, false, null, null, 1, false, null, handle, firstPollAt, 0, 0L);
+    }
+
+    /** True while this task follows a job in another system: it has a handle and is not finished. Nothing runs it; polls and callbacks move it on. */
+    public boolean external() {
+        return handle != null && !status.isTerminal();
     }
 
     /** The input requests that have no answer yet. */
@@ -90,6 +110,8 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
         private String     workerId;
         private Instant    leaseUntil;
         private int        attempt;
+        private Instant    nextPollAt;
+        private int        pollFailures;
 
         private final TaskRecord base;
 
@@ -106,6 +128,8 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
             this.workerId        = base.workerId;
             this.leaseUntil      = base.leaseUntil;
             this.attempt         = base.attempt;
+            this.nextPollAt      = base.nextPollAt;
+            this.pollFailures    = base.pollFailures;
         }
 
 
@@ -150,6 +174,17 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
             return this;
         }
 
+        /** When the external job is polled next; null for none. */
+        public Editor nextPollAt(Instant nextPollAt) {
+            this.nextPollAt = nextPollAt;
+            return this;
+        }
+
+        public Editor pollFailures(int pollFailures) {
+            this.pollFailures = pollFailures;
+            return this;
+        }
+
         /** Starts the next attempt: the number grows by one. */
         public Editor nextAttempt() {
             this.attempt = base.attempt + 1;
@@ -157,7 +192,8 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
         }
 
         private TaskRecord build(Instant now, boolean touch) {
-            return new TaskRecord(base.id, base.owner, base.tool, status, statusMessage, base.createdAt, touch ? now : base.lastUpdatedAt, base.ttlMs, base.expiresAt, base.pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, attempt, base.restartable, base.call, base.version + 1);
+            boolean ended = status.isTerminal();
+            return new TaskRecord(base.id, base.owner, base.tool, status, statusMessage, base.createdAt, touch ? now : base.lastUpdatedAt, base.ttlMs, base.expiresAt, base.pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, attempt, base.restartable, base.call, ended ? null : base.handle, ended ? null : nextPollAt, ended ? 0 : pollFailures, base.version + 1);
         }
     }
 }

@@ -1027,6 +1027,12 @@ public class McpRequestHandler {
         try {
             ToolCall call = new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress, context.trace());
             outcome = prepared.tool().call(call);
+            if (outcome instanceof ToolResult.ExternalTask external) {
+                if (!tasks.enabled() || !Tasks.clientSupports(context.clientCapabilities())) {
+                    throw McpProtocolException.missingClientExtension(Tasks.EXTENSION_ID);
+                }
+                return tasks.createExternal(external, call);
+            }
             if (outcome instanceof ToolResult.Task task) {
                 if (tasks.enabled() && Tasks.clientSupports(context.clientCapabilities())) {
                     return tasks.create(task, call);
@@ -1127,6 +1133,7 @@ public class McpRequestHandler {
                 }
             }
             case ToolResult.Task task -> throw new IllegalStateException("A task is not a result");
+            case ToolResult.ExternalTask external -> throw new IllegalStateException("A task is not a result");
             case ToolResult.InputRequired input -> {
                 result.add("resultType", "input_required");
                 if (input.inputRequests() != null) {

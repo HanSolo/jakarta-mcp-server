@@ -54,6 +54,11 @@ public class InMemoryTaskStore implements TaskStore {
     }
 
     @Override
+    public List<String> pollDue(Instant now, int limit) {
+        return tasks.values().stream().filter(t -> !t.status().isTerminal() && t.nextPollAt() != null && !t.nextPollAt().isAfter(now)).sorted(java.util.Comparator.comparing(TaskRecord::nextPollAt)).limit(limit).map(TaskRecord::id).toList();
+    }
+
+    @Override
     public List<String> expired(Instant now, int limit) {
         return tasks.values().stream().filter(t -> t.expiresAt() != null && !t.expiresAt().isAfter(now)).limit(limit).map(TaskRecord::id).toList();
     }

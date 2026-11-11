@@ -325,6 +325,7 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 | `mcp.tasks.executor` | `java:comp/DefaultManagedExecutorService`, then virtual threads | JNDI name of the executor that runs the work |
 | `mcp.tasks.heartbeat-ms`, `mcp.tasks.lease-ms`, `mcp.tasks.sweep-ms` | 10000, 30000, 30000 | Lease renewal, lease length and how often lost and expired tasks are looked for |
 | `mcp.tasks.max-attempts` | 3 | Most runs of a restartable task, the first included; 1 switches restarts off |
+| `mcp.tasks.external-poll-ms`, `mcp.tasks.external-max-failures` | 5000, 5 | How often a task that follows an external job asks about it (and the delay before the first question), and how many failed questions in a row fail the task |
 | `mcp.tasks.notify-poll-ms` | 2000 | How often a `subscriptions/listen` stream that watches tasks looks in the store for changes made on other instances |
 | `mcp.tasks.input-poll-ms`, `mcp.tasks.input-timeout-ms` | 500, 3600000 | How often work that waits for input looks for the answer, and how long it waits at most |
 | `mcp.bridge.jms.connection-factory` | none | JMS notification bridge (module `mcp-jakarta-bridge-jms`): JNDI name of a `ConnectionFactory`; switches the bridge on. Also `.topic` (default `mcp.notifications`), `.user`, `.password`, `.ttl-ms` (60000), `.reconnect-ms` (5000) |
@@ -651,8 +652,37 @@ public ToolResult report(ToolCall call) {
 - **JDBC store:** add `eu.hansolo.mcp:mcp-jakarta-tasks-jdbc` to the application and set `mcp.tasks.datasource` to the JNDI name of a `DataSource` (production), or `mcp.tasks.jdbc.url` with `mcp.tasks.jdbc.user` and `mcp.tasks.jdbc.password` (a connection per operation, no pooling: tests and small setups; the driver must be in the application). One table, `mcp_tasks` (`mcp.tasks.jdbc.table`); create it with the statements of `JdbcTaskStore.ddl(table, "TEXT")` (PostgreSQL), `"CLOB"` (H2) or `JdbcTaskStore.ddl(table, "LONGTEXT", true)` (MariaDB and MySQL, which have no `CREATE INDEX IF NOT EXISTS`, so the indexes are declared inside `CREATE TABLE`), or set `mcp.tasks.jdbc.create-schema=true` (PostgreSQL, MariaDB, MySQL and H2; the dialect follows the database's product name). Verified on PostgreSQL, MariaDB 11 and MySQL 8.4; with MySQL 8 and a connection without TLS, add `allowPublicKeyRetrieval=true` to the JDBC URL or use TLS. It uses plain standard SQL, one statement per operation, compare-and-set as `UPDATE ... WHERE id = ? AND version_no = ?`. Run the same settings on every instance, and the same database.
 - **Instances:** any instance answers `tasks/get`, `tasks/update` and `tasks/cancel` from the shared store. Cancellation and answers reach the instance that runs the work within one heartbeat (cancel) or one `mcp.tasks.input-poll-ms` (input). An instance that dies leaves its tasks to be declared `failed` by another instance after `mcp.tasks.lease-ms`.
 - **Notifications:** instead of polling `tasks/get`, a client can open `subscriptions/listen` with `notifications.taskIds` (it must have declared the extension, else -32021). The acknowledgement lists the ids the server honors (unknown, expired and foreign ids are left out; at most 50 per stream). The stream then sends `notifications/tasks` with the same content `tasks/get` would return at that moment (without `resultType`), first the current state and then on every change, and stops watching a task after it has sent a terminal state. Changes made on this instance are sent at once; the stream also looks in the task store every `mcp.tasks.notify-poll-ms` (default 2000), which is how a task that runs on another instance reaches it. Cost: one store lookup per interval for all tasks watched by the stream (`TaskStore.findAll`; the JDBC store reads them in chunks of 200 ids). Clients may keep polling. `notifications/progress` and `notifications/message` are never sent for a task.
-- **Not done yet:** tasks for anything but `tools/call`, external job handles, restartable tasks.
-- Tested with unit tests (engine with a controllable clock, wire behaviour), `JdbcTaskStoreTest` and `TwoInstancesTest` (two services over one H2 database), and these integration tests: `TasksIT` (9 tests incl. the listen stream; all three servers found their container's managed executor or fell back without error), `TasksClusterIT` (two server containers and PostgreSQL; 5 tests, including a stream on B that follows a task on A), `TasksClusterMariaDbIT` (the same on MariaDB 11), `TasksClusterMySqlIT` (the same on MySQL 8.4 with Connector/J; run on Payara) and `TasksJndiIT` (3 tests: the store through a JNDI `DataSource` that the server provides, with PostgreSQL; Payara gets it from a boot command file, WildFly from a CLI script, Open Liberty from `configDropins`). All passed on Payara, WildFly and Open Liberty in the run of 2026-11-10, except `TasksClusterMySqlIT` as noted. MCP Inspector 2.14.0 was also used by hand against `mcp-example-tasks` (see [scripts/client-check/README.md](scripts/client-check/README.md)).
+- **External jobs (no worker thread):** for work that runs in another system (a CI build, a batch run, a training job) the tool starts the job and returns `ToolResult.externalTask(handle)` instead of `ToolResult.task(work)`. The server stores the handle with the task, keeps no thread, and asks an `ExternalJob` bean about the job every `mcp.tasks.external-poll-ms` on whichever instance gets there first; an instance that dies while asking only delays the next question by one lease. Because nothing runs the task, a lost instance does not fail it.
+
+```java
+@ApplicationScoped
+public class BuildJob implements ExternalJob {
+    public String tool() { return "run_build"; }
+
+    public ExternalJobStatus poll(String taskId, JsonObject handle) throws Exception {       // read only: it may run twice at about the same time
+        Build b = ci.status(handle.getString("buildId"));
+        return switch (b.state()) {
+            case RUNNING -> ExternalJobStatus.running("step " + b.step());                     // optional message, optional retryAfter
+            case PASSED  -> ExternalJobStatus.completed(ToolResult.text("Build " + b.number() + " passed"));
+            default      -> ExternalJobStatus.failed("Build " + b.number() + " failed");
+        };
+    }
+
+    public void cancel(String taskId, JsonObject handle) throws Exception { ci.stop(handle.getString("buildId")); }   // optional
+}
+
+// in the tool:
+return ToolResult.externalTask(taskId -> Json.createObjectBuilder().add("buildId", ci.start(call.arguments(), taskId)).build());
+```
+
+  - **Start:** the lambda gets the task id before the task is stored, so it can be given to the other system as a correlation key. A client without the extension (or with `mcp.tasks.enabled` off) is refused with -32021 *before* the lambda runs, so no job is started that nobody follows. A tool that wants to do something else for such clients checks `ToolCall.clientSupportsTasks()` first.
+  - **Callback:** the other system can end the task sooner. Inject `McpExternalJobs` into your own endpoint and call `complete(taskId, result)`, `fail(taskId, message)` or `progress(taskId, message)`. It works on every instance. **Authenticate that endpoint yourself**: whoever can call it can end any task. Keep the poll as well, because a callback can be lost.
+  - **Cancel:** `tasks/cancel` calls `ExternalJob.cancel` and ends the task as `cancelled` when it returns. If it throws, the next poll tries again, until `mcp.tasks.external-max-failures`.
+  - **Failures:** a poll that throws is repeated; after `mcp.tasks.external-max-failures` in a row (default 5) the task fails with "The external job could not be reached" (the cause is only logged). A good answer resets the count.
+  - **The handle** is a JSON object of at most 16 KiB. It is stored in the task store but never sent to a client, and it is deleted when the task ends. Put a job id in it, not credentials.
+  - **Rules:** one `ExternalJob` bean per tool name (a second one fails the deployment). A task whose tool has no bean fails. A job that is still running when the task expires is left running; cancel it in your own code if that matters.
+- **Not done yet:** tasks for anything but `tools/call`.
+- Tested with unit tests (engine with a controllable clock, wire behaviour, `ExternalJobsTest` for external jobs), `JdbcTaskStoreTest` and `TwoInstancesTest` (two services over one H2 database), and these integration tests: `TasksIT` (9 tests incl. the listen stream; all three servers found their container's managed executor or fell back without error), `TasksClusterIT` (two server containers and PostgreSQL; 5 tests, including a stream on B that follows a task on A), `TasksClusterMariaDbIT` (the same on MariaDB 11), `TasksClusterMySqlIT` (the same on MySQL 8.4 with Connector/J; run on Payara) and `TasksJndiIT` (3 tests: the store through a JNDI `DataSource` that the server provides, with PostgreSQL; Payara gets it from a boot command file, WildFly from a CLI script, Open Liberty from `configDropins`). All passed on Payara, WildFly and Open Liberty in the run of 2026-11-10, except `TasksClusterMySqlIT` as noted. MCP Inspector 2.14.0 was also used by hand against `mcp-example-tasks` (see [scripts/client-check/README.md](scripts/client-check/README.md)).
 
 ## Trace context
 
@@ -748,7 +778,7 @@ This is per instance, like `McpNotifications`: with several instances, make the 
 
 Everything an application is meant to use lives in `eu.hansolo.mcp.api` (annotations, `ToolResult`, `McpSkill` and the other interfaces),
 plus these classes of `eu.hansolo.mcp.server`: `McpRegistrations`, `McpNotifications`, `McpNotificationBridge`, `McpChange`,
-`McpRequestStates` and `Settings`. Together with `eu.hansolo.mcp.protocol`, `eu.hansolo.mcp.auth`, `eu.hansolo.mcp.rest` and
+`McpExternalJobs`, `McpRequestStates` and `Settings`. Together with `eu.hansolo.mcp.protocol`, `eu.hansolo.mcp.auth`, `eu.hansolo.mcp.rest` and
 `eu.hansolo.mcp.tasks` (the store interface and its records) these are what 1.0.0 freezes.
 
 `McpRequestHandler`, `McpRegistry`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig` and `TaskConfig` are public only
@@ -775,7 +805,18 @@ The `docker run` line above sets `MCP_TASKS_ENABLED=true`, because the Tasks ext
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); ready-made bridge transports other than Jakarta Messaging (for anything else you write `McpNotificationBridge` yourself, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; remote `$ref` in argument validation (on purpose, see Argument validation); 2025-11-25 compatibility (on purpose: only 2026-07-28 is supported).
+- Ready-made bridge transports other than Jakarta Messaging. For anything else (a database notification, Redis, HTTP) you write a `McpNotificationBridge` yourself, see "Several instances". More modules may follow if there is demand.
+- Tasks for anything but `tools/call` (see Tasks).
+
+## Non-goals
+
+These are left out on purpose and are not planned for any release, so do not wait for them:
+
+- **Logging** (`io.modelcontextprotocol/logLevel`, `notifications/message`): 2026-07-28 deprecates it and says new implementations should not adopt it.
+- **Sampling and roots:** the specification deprecates both (see [docs/design/deprecated-features.md](docs/design/deprecated-features.md)). A tool can still build such an input request by hand with `ToolResult.inputRequired(JsonObject, String)`.
+- **SSE and progress for anything but `tools/call` and `subscriptions/listen`:** `resources/read` and `prompts/get` always answer with one JSON response. Do long-running work in a tool, or in a task.
+- **Remote `$ref` in argument validation:** following a URL taken from a schema is a server-side request forgery risk. Local references (`#/$defs/...`) work, see Argument validation.
+- **2025-11-25 compatibility:** only 2026-07-28 is supported.
 
 ## Decisions worth a second look
 

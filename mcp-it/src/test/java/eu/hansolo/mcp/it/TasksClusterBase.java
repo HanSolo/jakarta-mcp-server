@@ -67,6 +67,7 @@ abstract class TasksClusterBase {
         env.put("MCP_TASKS_SWEEP_MS", "500");
         env.put("MCP_TASKS_INPUT_POLL_MS", "100");
         env.put("MCP_TASKS_NOTIFY_POLL_MS", "200");
+        env.put("MCP_TASKS_EXTERNAL_POLL_MS", "300");
         int port = ServerFixture.httpPort();
         a = ServerFixture.create(ServerFixture.fixtureWar(), env, false).withNetwork(network).withNetworkAliases("mcp-a");
         b = ServerFixture.create(ServerFixture.fixtureWar(), env, false).withNetwork(network).withNetworkAliases("mcp-b");
@@ -141,6 +142,22 @@ abstract class TasksClusterBase {
         }
     }
 
+
+    @Test
+    @Order(0)
+    void anExternalTaskCreatedOnAIsFollowedByWhicheverInstanceAsksFirstAndEndedByACallbackOnB() throws Exception {
+        McpClient.Reply reply = rpc(clientA, "tools/call", "external_demo", Json.createObjectBuilder().add("name", "external_demo").add("arguments", Json.createObjectBuilder().add("millis", 1500)));
+        assertEquals(200, reply.status(), reply.body());
+        String polled = reply.json().getJsonObject("result").getString("taskId");
+        JsonObject done = awaitStatus(clientB, polled, "completed");
+        assertEquals("external job finished", done.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+
+        reply = rpc(clientA, "tools/call", "external_demo", Json.createObjectBuilder().add("name", "external_demo").add("arguments", Json.createObjectBuilder().add("millis", 3_600_000)));
+        String called = reply.json().getJsonObject("result").getString("taskId");
+        assertEquals("working", get(clientB, called).getString("status"));
+        assertEquals(204, clientB.request("POST", "/admin/external/" + called + "/complete", null).status());
+        assertEquals("completed by callback", awaitStatus(clientA, called, "completed").getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+    }
 
     @Test
     @Order(1)

@@ -6,7 +6,7 @@ import jakarta.json.JsonObject;
 import jakarta.json.JsonValue;
 
 /** The outcome of a tool call: either a final result or a request for more input from the client. */
-public sealed interface ToolResult permits ToolResult.Complete, ToolResult.InputRequired, ToolResult.Task {
+public sealed interface ToolResult permits ToolResult.Complete, ToolResult.InputRequired, ToolResult.Task, ToolResult.ExternalTask {
 
     /**
      * A final result.
@@ -103,17 +103,57 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
         }
     }
 
-    static ToolResult text(String text) {
+    /**
+     * The tool started a job in another system and the task follows it without holding a thread: the server stores the handle, asks the
+     * {@link ExternalJob} of this tool about the job every {@code mcp.tasks.external-poll-ms} (on any instance), and ends the task when the
+     * job is done. Needs {@code mcp.tasks.enabled} and a client that declared the Tasks extension; any other client is refused with
+     * -32021, before {@code start} is called, so no job is started that nobody follows. Check {@link ToolCall#clientSupportsTasks()} first if
+     * the tool should do something else for such clients.
+     *
+     * @param start            starts the job once the task id is known; see {@link ExternalStart}
+     * @param ttlMs            how long the task is kept, counted from its creation, or null for the server default
+     * @param noExpiry         true to keep the task without limit (then {@code ttlMs} must be null)
+     * @param pollIntervalMs   suggested polling interval for the client, or null for the server default
+     */
+    record ExternalTask(ExternalStart start, Long ttlMs, boolean noExpiry, Long pollIntervalMs) implements ToolResult {
+
+        public ExternalTask {
+            if (start == null) {
+                throw new IllegalArgumentException("An external task needs a start");
+            }
+            if (ttlMs != null && (noExpiry || ttlMs <= 0)) {
+                throw new IllegalArgumentException("ttlMs must be positive and cannot be combined with noExpiry");
+            }
+            if (pollIntervalMs != null && pollIntervalMs <= 0) {
+                throw new IllegalArgumentException("pollIntervalMs must be positive");
+            }
+        }
+
+        public ExternalTask withTtlMs(long ttlMs) {
+            return new ExternalTask(start, ttlMs, false, pollIntervalMs);
+        }
+
+        /** Keep the task until the server's store drops it for other reasons. */
+        public ExternalTask withoutExpiry() {
+            return new ExternalTask(start, null, true, pollIntervalMs);
+        }
+
+        public ExternalTask withPollIntervalMs(long pollIntervalMs) {
+            return new ExternalTask(start, ttlMs, noExpiry, pollIntervalMs);
+        }
+    }
+
+    static Complete text(String text) {
         return new Complete(Json.createArrayBuilder().add(textBlock(text)).build(), null, false);
     }
 
     /** A tool failure the model should see. Do not put secrets or stack traces in the message. */
-    static ToolResult error(String message) {
+    static Complete error(String message) {
         return new Complete(Json.createArrayBuilder().add(textBlock(message)).build(), null, true);
     }
 
     /** Structured result; the JSON text is also returned as a text block for clients that ignore structuredContent. */
-    static ToolResult structured(JsonObject data) {
+    static Complete structured(JsonObject data) {
         return new Complete(Json.createArrayBuilder().add(textBlock(data.toString())).build(), data, false);
     }
 
@@ -139,6 +179,19 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
     /** Runs the work as a task for clients that support the extension, inline for the others. */
     static Task task(TaskWork work) {
         return new Task(work, null, false, null);
+    }
+
+    /** Follows a job that the tool has already started in another system; {@code handle} is what the tool's {@link ExternalJob} needs to ask about it. */
+    static ExternalTask externalTask(JsonObject handle) {
+        if (handle == null) {
+            throw new IllegalArgumentException("handle is required");
+        }
+        return new ExternalTask(taskId -> handle, null, false, null);
+    }
+
+    /** Starts the job once the task id exists (to use as a correlation key for a callback) and follows it. */
+    static ExternalTask externalTask(ExternalStart start) {
+        return new ExternalTask(start, null, false, null);
     }
 
     private static JsonObject textBlock(String text) {
