@@ -24,6 +24,9 @@ import jakarta.inject.Singleton;
  *   <li>{@code mcp.tasks.max-attempts}: how many times a restartable task is run at most, the first run included (default 3). 1 switches
  *       restarts off.</li>
  * </ul>
+ *
+ * <p><b>Internal class, stable settings.</b> The settings below are part of the stable configuration; the class that reads them is not,
+ * and applications should not call it.
  */
 @Singleton
 public class TaskConfig {

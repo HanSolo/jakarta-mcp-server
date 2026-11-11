@@ -7,7 +7,12 @@ import eu.hansolo.mcp.auth.AuthConfig;
 
 import java.util.logging.Logger;
 
-/** Builds the registry and validates the configuration at deployment time, so mistakes fail the deployment instead of the first request. */
+/**
+ * Builds the registry and validates the configuration at deployment time, so mistakes fail the deployment instead of the first request.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it, and it can
+ * change in any release. Applications should not call it.
+ */
 @ApplicationScoped
 public class McpStartup {
 

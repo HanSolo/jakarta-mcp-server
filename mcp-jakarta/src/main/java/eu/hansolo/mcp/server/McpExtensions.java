@@ -16,6 +16,9 @@ import java.util.TreeMap;
 /**
  * The extensions this server announces in {@code server/discover}: every {@link McpExtension} bean, checked once at startup (valid
  * identifier, no duplicates, settings are an object). With none, {@code capabilities} has no {@code extensions} field.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it, and it can
+ * change in any release. Applications should not call it.
  */
 @Singleton
 public class McpExtensions {

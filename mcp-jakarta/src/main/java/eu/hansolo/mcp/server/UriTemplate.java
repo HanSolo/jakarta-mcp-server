@@ -13,6 +13,9 @@ import java.util.regex.Pattern;
 /**
  * The subset of RFC 6570 that resource templates need, matched in the reverse direction (URI to variables): {@code {name}}
  * matches one segment (no {@code / ? #}), {@code {+name}} matches anything. Two variables must be separated by literal text.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it, and it can
+ * change in any release. Applications should not call it.
  */
 public final class UriTemplate {
 

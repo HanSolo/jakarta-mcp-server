@@ -744,6 +744,18 @@ Completions have no list, so adding or removing one tells nobody. A completion i
 
 This is per instance, like `McpNotifications`: with several instances, make the same call on each. Clients that do not listen see a change when their cached list expires (`mcp.cache-ttl-ms`).
 
+## Stable API and internals
+
+Everything an application is meant to use lives in `eu.hansolo.mcp.api` (annotations, `ToolResult`, `McpSkill` and the other interfaces),
+plus these classes of `eu.hansolo.mcp.server`: `McpRegistrations`, `McpNotifications`, `McpNotificationBridge`, `McpChange`,
+`McpRequestStates` and `Settings`. Together with `eu.hansolo.mcp.protocol`, `eu.hansolo.mcp.auth`, `eu.hansolo.mcp.rest` and
+`eu.hansolo.mcp.tasks` (the store interface and its records) these are what 1.0.0 freezes.
+
+`McpRequestHandler`, `McpRegistry`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig` and `TaskConfig` are public only
+because other packages of the library need them. Their Javadoc says so; they can change in any release. The settings that `McpConfig` and
+`TaskConfig` read are stable, the classes are not. The scanners in `eu.hansolo.mcp.tools` are for the library's own startup and for tests
+that build a registry by hand.
+
 ## Pagination
 
 Set `mcp.page-size` to split the four list methods into pages; the default (0) returns each list whole and rejects every cursor. Pages are in ascending order of tool/prompt name, resource URI or template, and each result carries `nextCursor` when more items follow. The cursor is keyset-based: it encodes the last key returned (`k1:<key>`, base64url) and the next page is everything after it. So no server state is needed, any instance can serve any page, and a cursor stays valid when items are added or removed. It is not signed: it contains nothing secret, and a forged cursor only picks a starting point in a list the caller may see anyway, because scope filtering is applied on every page. Cursors longer than 4096 characters, malformed ones and non-strings are -32602. `ttlMs` and `cacheScope` are identical on all pages, as the spec requires.

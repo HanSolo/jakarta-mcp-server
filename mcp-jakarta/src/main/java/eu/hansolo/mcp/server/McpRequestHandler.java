@@ -68,6 +68,9 @@ import java.util.logging.Logger;
 /**
  * The whole Streamable HTTP request/response logic of MCP 2026-07-28, independent of JAX-RS: give it a header lookup and a
  * body, get back a status and JSON text. It keeps no per-client state, so any instance can serve any request.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it, and it can
+ * change in any release. Applications should not call it.
  */
 @Singleton
 public class McpRequestHandler {

@@ -32,6 +32,9 @@ import java.util.logging.Logger;
  *       like) instead of treating it as an annotation. Default false.</li>
  *   <li>{@code mcp.server.name}, {@code mcp.server.version}, {@code mcp.instructions}: identity and model guidance.</li>
  * </ul>
+ *
+ * <p><b>Internal class, stable settings.</b> The settings below are part of the stable configuration; the class that reads them is not,
+ * and applications should not call it.
  */
 @Singleton
 public class McpConfig {

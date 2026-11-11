@@ -33,8 +33,12 @@ import java.util.regex.Pattern;
 
 /**
  * Every tool, resource, resource template and prompt of the deployment, validated and listed in a deterministic order (by
- * name or URI) so clients can cache the lists. Everything found at startup is validated once; tools and prompts can also be added
- * and removed while the server runs, through {@link McpRegistrations}, which also tells subscribed clients.
+ * name or URI) so clients can cache the lists. Everything found at startup is validated once; tools, prompts, resources, resource
+ * templates and completions can also be added and removed while the server runs, through {@link McpRegistrations}, which also tells
+ * subscribed clients.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it, and it can
+ * change in any release. Applications should not call it.
  */
 @Singleton
 public class McpRegistry {

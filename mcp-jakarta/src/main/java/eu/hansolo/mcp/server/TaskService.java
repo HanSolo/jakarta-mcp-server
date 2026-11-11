@@ -64,8 +64,12 @@ import java.util.logging.Logger;
  *
  * <p>The task record lives in a {@link TaskStore}; the work runs on one instance, which renews a lease on the record every
  * {@code mcp.tasks.heartbeat-ms}. An instance that finds a record whose lease ended (its worker stopped without finishing) declares it
- * {@code failed}, or {@code cancelled} if cancellation was requested. The work itself is not restarted: the store makes the record
- * durable, not the execution.
+ * {@code cancelled} if cancellation was requested. Otherwise a restartable task is run again, up to {@code mcp.tasks.max-attempts} runs in
+ * all, and any other task is declared {@code failed}. The store makes the record durable; the execution is repeated only where the task
+ * says it may be.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it, and it can
+ * change in any release. Applications should not call it.
  */
 @Singleton
 public class TaskService {
