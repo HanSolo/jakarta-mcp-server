@@ -6,6 +6,7 @@ import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.tasks.InMemoryTaskStore;
 import eu.hansolo.mcp.tasks.TaskRecord;
+import eu.hansolo.mcp.tasks.TaskStore;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import org.junit.jupiter.api.Test;
@@ -15,10 +16,12 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -169,6 +172,54 @@ class RestartableTasksTest {
         a.close();
         assertEquals("failed", store.find(id).orElseThrow().status().wire());
         hold.countDown();
+    }
+
+    @Test
+    void aShutdownThatCannotReachTheStoreLeavesARestartableTaskWorking() throws Exception {
+        AtomicBoolean down  = new AtomicBoolean();
+        TaskStore     flaky = new TaskStore() {
+            @Override
+            public void create(TaskRecord task) {
+                store.create(task);
+            }
+
+            @Override
+            public Optional<TaskRecord> find(String id) {
+                if (down.get()) {
+                    throw new IllegalStateException("the store is gone");
+                }
+                return store.find(id);
+            }
+
+            @Override
+            public boolean replace(TaskRecord current, TaskRecord next) {
+                return store.replace(current, next);
+            }
+
+            @Override
+            public List<String> leaseExpired(Instant now, int limit) {
+                return store.leaseExpired(now, limit);
+            }
+
+            @Override
+            public List<String> expired(Instant now, int limit) {
+                return store.expired(now, limit);
+            }
+
+            @Override
+            public void delete(String id) {
+                store.delete(id);
+            }
+        };
+        TaskConfig config = new TaskConfig(true, 3_600_000L, 2_000L, 1024 * 1024, 100, null, 10_000L, 30_000L, 60_000L, 100L, 60_000L, 2_000L, 3);
+        TaskService a = new TaskService(flaky, config, McpRegistry.of(List.of(tool)), clock, Executors.newVirtualThreadPerTaskExecutor());
+        String id = a.create(first(), call()).getString("taskId");
+        down.set(true);
+        a.close();                              // nothing can be written
+        down.set(false);
+        hold.countDown();                       // the worker ends: it must not write "cancelled" or a result over a task another instance can still take over
+        Thread.sleep(300);
+        assertEquals("working", store.find(id).orElseThrow().status().wire());
     }
 
     @Test

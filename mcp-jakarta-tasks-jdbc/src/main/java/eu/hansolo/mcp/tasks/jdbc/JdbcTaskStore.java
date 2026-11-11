@@ -14,6 +14,8 @@ import javax.naming.NamingException;
 import javax.sql.DataSource;
 import java.io.PrintWriter;
 import java.io.StringReader;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.DriverManager;
@@ -26,13 +28,17 @@ import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -205,22 +211,32 @@ public class JdbcTaskStore implements TaskStore {
         return found;
     }
 
-    /** One new connection per call, from the driver on the classpath. No pooling: meant for tests and small setups. */
+    /**
+     * Connections from the driver on the classpath, for tests and small setups: a few idle connections are kept and handed out again. That is not for speed alone. A server that is
+     * stopping may already have deleted the driver's jar, and some drivers read it on every {@code connect} (MariaDB looks up its codecs through a {@code ServiceLoader}), but a
+     * connection that is open needs nothing from the file system, so the hand-over of running tasks in {@code TaskService.close()} still reaches the database. The idle connections
+     * are not closed when the store is destroyed, for the same reason: that could happen before the tasks are handed over. Use a {@code DataSource} from the server for anything else.
+     */
     private static final class DriverManagerDataSource implements DataSource {
 
         private final String url;
         private final String user;
         private final String password;
+        private static final int MAX_IDLE = 4;
+
+        private final List<Driver> drivers = new ArrayList<>();
+        private final Deque<Connection> idle = new ConcurrentLinkedDeque<>();
 
 
         private DriverManagerDataSource(String url, String user, String password) {
             this.url      = url;
             this.user     = user;
             this.password = password;
-            // a driver in the application's own lib directory is invisible to DriverManager if the server initialised it earlier: loading the drivers through this class's loader registers them
+            // a driver in the application's own lib directory is invisible to DriverManager if the server initialised it earlier: loading the drivers through this class's loader registers them.
+            // The instances are kept as well: a server that stops the application takes the drivers out of DriverManager before the beans are destroyed (Payara does), and the store must still reach the database then
             try {
-                for (Driver ignored : ServiceLoader.load(Driver.class, JdbcTaskStore.class.getClassLoader())) {
-                    // creating the driver registers it
+                for (Driver driver : ServiceLoader.load(Driver.class, JdbcTaskStore.class.getClassLoader())) {
+                    drivers.add(driver);
                 }
             } catch (ServiceConfigurationError e) {
                 LOG.log(Level.WARNING, "A JDBC driver could not be loaded", e);
@@ -230,12 +246,96 @@ public class JdbcTaskStore implements TaskStore {
 
         @Override
         public Connection getConnection() throws SQLException {
-            return user == null ? DriverManager.getConnection(url) : DriverManager.getConnection(url, user, password);
+            Connection real = idle.pollFirst();
+            while (real != null) {
+                if (usable(real)) {
+                    return handle(real);
+                }
+                closeQuietly(real);
+                real = idle.pollFirst();
+            }
+            return handle(open(user, password));
+        }
+
+        private static boolean usable(Connection connection) {
+            try {
+                return !connection.isClosed() && connection.isValid(2);
+            } catch (SQLException | RuntimeException e) {
+                return false;
+            }
+        }
+
+        private static void closeQuietly(Connection connection) {
+            try {
+                connection.close();
+            } catch (SQLException | RuntimeException ignored) {
+                // gone anyway
+            }
+        }
+
+        /** A connection whose {@code close} gives it back instead of closing it. */
+        private Connection handle(Connection real) {
+            AtomicBoolean closed = new AtomicBoolean();
+            return (Connection) Proxy.newProxyInstance(JdbcTaskStore.class.getClassLoader(), new Class<?>[] {Connection.class}, (proxy, method, args) -> {
+                if (method.getDeclaringClass() == Object.class) {
+                    return method.invoke(real, args);
+                }
+                String name = method.getName();
+                if (name.equals("close") && method.getParameterCount() == 0) {
+                    if (closed.compareAndSet(false, true)) {
+                        release(real);
+                    }
+                    return null;
+                }
+                if (name.equals("isClosed")) {
+                    return closed.get() || real.isClosed();
+                }
+                if (closed.get()) {
+                    throw new SQLException("The connection is closed");
+                }
+                try {
+                    return method.invoke(real, args);
+                } catch (InvocationTargetException e) {
+                    throw e.getCause();
+                }
+            });
+        }
+
+        private void release(Connection real) {
+            try {
+                if (!real.isClosed() && idle.size() < MAX_IDLE) {
+                    idle.addFirst(real);
+                    return;
+                }
+            } catch (SQLException | RuntimeException ignored) {
+                // not reusable
+            }
+            closeQuietly(real);
         }
 
         @Override
         public Connection getConnection(String username, String pass) throws SQLException {
-            return DriverManager.getConnection(url, username, pass);
+            return open(username, pass);
+        }
+
+        /** Through a driver this store holds itself if one accepts the URL, otherwise through DriverManager. */
+        private Connection open(String username, String pass) throws SQLException {
+            Properties info = new Properties();
+            if (username != null) {
+                info.setProperty("user", username);
+            }
+            if (pass != null) {
+                info.setProperty("password", pass);
+            }
+            for (Driver driver : drivers) {
+                if (driver.acceptsURL(url)) {
+                    Connection connection = driver.connect(url, info);
+                    if (connection != null) {
+                        return connection;
+                    }
+                }
+            }
+            return username == null ? DriverManager.getConnection(url) : DriverManager.getConnection(url, username, pass);
         }
 
         @Override

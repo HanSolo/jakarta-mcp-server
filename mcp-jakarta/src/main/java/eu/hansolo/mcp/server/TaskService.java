@@ -496,40 +496,67 @@ public class TaskService {
         return null;
     }
 
-    /** Stops the upkeep thread and ends the tasks this instance still runs as failed, so clients need not wait for a lease to run out. */
+    /**
+     * Stops the upkeep thread, hands the restartable tasks this instance still runs over to the other instances and ends the others as failed, so clients
+     * need not wait for a lease to run out. A server that is stopping leaves little time for this, and may have taken the driver away already: a restartable
+     * task costs one read and one write, and if even that fails the task is left alone, so its lease runs out and another instance takes it over.
+     */
     @PreDestroy
     public synchronized void close() {
+        // a server that is stopping may interrupt this thread: the hand-over must still be written, so the flag is put aside and restored at the end
+        boolean interrupted = Thread.interrupted();
         if (scheduler != null) {
             scheduler.shutdownNow();
-        }
-        for (Running worker : running.values()) {
             try {
-                Optional<TaskRecord> stored = store.find(worker.id);
-                boolean handOver = stored.isPresent() && !stored.get().status().isTerminal() && restartable(stored.get()) && !stored.get().cancelRequested();
-                if (handOver) {
-                    // a restartable task is handed over: its lease ends now, and the sweep of another instance starts it again; this worker writes nothing more
-                    worker.handedOver = true;
-                    Instant now = clock.instant();
-                    mutate(worker.id, rec -> rec.status().isTerminal() || stale(rec, worker) ? null : rec.edit(now, edit -> edit.lease(instanceId, now.minusMillis(1)).statusMessage("The server instance running this task is stopping")));
-                    worker.cancelled = true;
-                    worker.wake();
-                } else {
-                    // failed first, then wake the worker: a worker that wakes earlier ends the task as cancelled and wins the race
-                    try {
-                        finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server stopped before the task finished"))));
-                    } finally {
-                        worker.cancelled = true;
-                        worker.wake();
-                    }
-                }
-            } catch (RuntimeException e) {
-                worker.cancelled = true;
-                worker.wake();
-                LOG.log(Level.WARNING, "Could not close task " + abbreviate(worker.id) + "; its lease has to run out before another instance takes it over", e);
+                // a heartbeat that is under way holds a connection of the store: let it give that back
+                scheduler.awaitTermination(1, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
             }
+        }
+        // one after the other: the tasks reuse the same open connection, which matters when the server has already taken the driver away
+        for (Running worker : new ArrayList<>(running.values())) {
+            closeWorker(worker);
         }
         if (ownedExecutor != null) {
             ownedExecutor.shutdownNow();
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void closeWorker(Running worker) {
+        try {
+            Optional<TaskRecord> stored = store.find(worker.id);
+            boolean handOver = stored.isPresent() && !stored.get().status().isTerminal() && restartable(stored.get()) && !stored.get().cancelRequested();
+            if (handOver) {
+                // a restartable task is handed over: its lease ends now, and the sweep of another instance starts it again; this worker writes nothing more
+                worker.handedOver = true;
+                Instant now = clock.instant();
+                UnaryOperator<TaskRecord> end = rec -> rec.edit(now, edit -> edit.lease(instanceId, now.minusMillis(1)).statusMessage("The server instance running this task is stopping"));
+                TaskRecord current = stored.get();
+                boolean written = !stale(current, worker) && store.replace(current, end.apply(current));
+                if (!written) {
+                    written = mutate(worker.id, rec -> rec.status().isTerminal() || stale(rec, worker) ? null : end.apply(rec)).isPresent();
+                }
+                LOG.info("Task " + abbreviate(worker.id) + (written ? " handed over to the other instances" : " could not be handed over (it ended or another instance has it)"));
+                worker.cancelled = true;
+                worker.wake();
+            } else {
+                // failed first, then wake the worker: a worker that wakes earlier ends the task as cancelled and wins the race
+                try {
+                    finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server stopped before the task finished"))));
+                } finally {
+                    worker.cancelled = true;
+                    worker.wake();
+                }
+            }
+        } catch (RuntimeException | Error e) {
+            worker.handedOver = true;           // nothing could be written: the worker must not write "cancelled" over a task that another instance can still take over
+            worker.cancelled = true;
+            worker.wake();
+            LOG.log(Level.WARNING, "Could not close task " + abbreviate(worker.id) + "; its lease has to run out before another instance takes it over", e);
         }
     }
 
