@@ -28,6 +28,8 @@ import java.util.logging.Logger;
  *   <li>{@code mcp.request-state.secret}: HMAC key for {@link McpRequestStates}. Default: a random key per instance, so states do not
  *       survive a restart and are not valid on other nodes; set it on every node of a cluster.</li>
  *   <li>{@code mcp.request-state.ttl-ms}: how long a signed request state stays valid. Default 600000 (10 minutes).</li>
+ *   <li>{@code mcp.validation.formats}: check the {@code format} keyword of tool input schemas (dates, e-mail addresses, URIs and the
+ *       like) instead of treating it as an annotation. Default false.</li>
  *   <li>{@code mcp.server.name}, {@code mcp.server.version}, {@code mcp.instructions}: identity and model guidance.</li>
  * </ul>
  */
@@ -48,13 +50,14 @@ public class McpConfig {
     private final String      listenExecutor;
     private final String      requestStateSecret;
     private final long        requestStateTtlMs;
+    private final boolean     assertFormats;
     private final String      serverName;
     private final String      serverVersion;
     private final String      instructions;
 
 
     public McpConfig() {
-        this(Settings.get("mcp.allowed-origins"), Settings.getInt("mcp.max-body-bytes", 1024 * 1024), Settings.getLong("mcp.cache-ttl-ms", 60_000L), Settings.get("mcp.server.name"), Settings.get("mcp.server.version"), Settings.get("mcp.instructions"), Settings.getInt("mcp.page-size", 0), Settings.getLong("mcp.listen.keepalive-ms", 15_000L), Settings.getInt("mcp.listen.max", 100), Settings.getInt("mcp.listen.max-per-caller", 10), Settings.getBoolean("mcp.listen.async", false), Settings.get("mcp.listen.executor"), Settings.get("mcp.request-state.secret"), Settings.getLong("mcp.request-state.ttl-ms", 600_000L));
+        this(Settings.get("mcp.allowed-origins"), Settings.getInt("mcp.max-body-bytes", 1024 * 1024), Settings.getLong("mcp.cache-ttl-ms", 60_000L), Settings.get("mcp.server.name"), Settings.get("mcp.server.version"), Settings.get("mcp.instructions"), Settings.getInt("mcp.page-size", 0), Settings.getLong("mcp.listen.keepalive-ms", 15_000L), Settings.getInt("mcp.listen.max", 100), Settings.getInt("mcp.listen.max-per-caller", 10), Settings.getBoolean("mcp.listen.async", false), Settings.get("mcp.listen.executor"), Settings.get("mcp.request-state.secret"), Settings.getLong("mcp.request-state.ttl-ms", 600_000L), Settings.getBoolean("mcp.validation.formats", false));
     }
 
     public McpConfig(String allowedOrigins, int maxBodyBytes, long cacheTtlMs, String serverName, String serverVersion, String instructions) {
@@ -74,6 +77,10 @@ public class McpConfig {
     }
 
     public McpConfig(String allowedOrigins, int maxBodyBytes, long cacheTtlMs, String serverName, String serverVersion, String instructions, int pageSize, long keepAliveMs, int maxListeners, int maxListenersPerCaller, boolean listenAsync, String listenExecutor, String requestStateSecret, long requestStateTtlMs) {
+        this(allowedOrigins, maxBodyBytes, cacheTtlMs, serverName, serverVersion, instructions, pageSize, keepAliveMs, maxListeners, maxListenersPerCaller, listenAsync, listenExecutor, requestStateSecret, requestStateTtlMs, false);
+    }
+
+    public McpConfig(String allowedOrigins, int maxBodyBytes, long cacheTtlMs, String serverName, String serverVersion, String instructions, int pageSize, long keepAliveMs, int maxListeners, int maxListenersPerCaller, boolean listenAsync, String listenExecutor, String requestStateSecret, long requestStateTtlMs, boolean assertFormats) {
         Properties built = buildProperties();
         this.allowedOrigins = parseOrigins(allowedOrigins);
         this.allowAnyOrigin = this.allowedOrigins.contains("*");
@@ -87,6 +94,7 @@ public class McpConfig {
         this.listenExecutor = listenExecutor != null && !listenExecutor.isBlank() ? listenExecutor.trim() : null;
         this.requestStateSecret = requestStateSecret != null && !requestStateSecret.isBlank() ? requestStateSecret : null;
         this.requestStateTtlMs  = Math.max(1_000L, requestStateTtlMs);
+        this.assertFormats      = assertFormats;
         this.serverName     = serverName != null && !serverName.isBlank() ? serverName : built.getProperty("name", "jakarta-mcp-server");
         this.serverVersion  = serverVersion != null && !serverVersion.isBlank() ? serverVersion : built.getProperty("version", "unknown");
         this.instructions   = instructions != null && !instructions.isBlank() ? instructions : null;
@@ -134,6 +142,11 @@ public class McpConfig {
     /** The configured HMAC secret for request states, or null to use a random key per instance. */
     public String requestStateSecret() {
         return requestStateSecret;
+    }
+
+    /** True if the {@code format} keyword of a tool's input schema is checked, not just passed on to the client. */
+    public boolean assertFormats() {
+        return assertFormats;
     }
 
     /** How long a signed request state stays valid, in milliseconds. */

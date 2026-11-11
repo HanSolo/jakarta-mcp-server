@@ -57,7 +57,7 @@ public final class JsonMapper {
             return Json.createValue(number);
         }
         if (value instanceof Float || value instanceof Double) {
-            return Json.createValue(((Number) value).doubleValue());
+            return decimal((Number) value);
         }
         if (value instanceof Enum<?> constant) {
             return Json.createValue(constant.name());
@@ -88,6 +88,18 @@ public final class JsonMapper {
             return record(value, depth);
         }
         throw new IllegalStateException("Cannot convert " + value.getClass().getName() + " to JSON: return a String, a number, a record, a Map, a collection, or a JSON-P value");
+    }
+
+    /** A whole {@code double} is written without a fraction ({@code 5}, not {@code 5.0}); a {@code float} keeps the digits it prints with ({@code 0.1}, not {@code 0.10000000149011612}). */
+    private static JsonValue decimal(Number value) {
+        double d = value.doubleValue();
+        if (Double.isNaN(d) || Double.isInfinite(d)) {
+            return Json.createValue(d);   // JSON-P refuses these, as it always did
+        }
+        if (d == Math.rint(d) && Math.abs(d) < 1e15) {
+            return Json.createValue((long) d);
+        }
+        return value instanceof Float ? Json.createValue(new BigDecimal(value.toString())) : Json.createValue(d);
     }
 
     private static JsonValue record(Object value, int depth) {

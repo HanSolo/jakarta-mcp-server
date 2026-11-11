@@ -2,6 +2,7 @@ package eu.hansolo.mcp.server;
 
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
+import eu.hansolo.mcp.tools.SchemaGenerator;
 import org.junit.jupiter.api.Test;
 
 import java.io.StringReader;
@@ -216,5 +217,101 @@ class SchemaValidatorTest {
 
     private static String problem(JsonObject schema, String arguments) {
         return SchemaValidator.validate(schema, schema(arguments)).orElse("<valid>");
+    }
+
+    record Folder(String name, java.util.List<Folder> folders) {
+    }
+
+
+    @Test
+    void aSchemaGeneratedForARecursiveRecordValidatesAtAnyDepth() {
+        SchemaGenerator.Defs defs = new SchemaGenerator.Defs();
+        var properties = Json.createObjectBuilder().add("folder", SchemaGenerator.schemaFor(Folder.class, defs));
+        var root = Json.createObjectBuilder().add("type", "object").add("properties", properties).add("required", Json.createArrayBuilder().add("folder")).add("additionalProperties", false);
+        defs.addTo(root);
+        JsonObject schema = root.build();
+        assertValid(schema, "{\"folder\":{\"name\":\"a\",\"folders\":[{\"name\":\"b\",\"folders\":[{\"name\":\"c\",\"folders\":[]}]}]}}");
+        assertEquals("Property 'folder.folders[0].folders[0].name' must be of type string", problem(schema, "{\"folder\":{\"name\":\"a\",\"folders\":[{\"name\":\"b\",\"folders\":[{\"name\":3,\"folders\":[]}]}]}}"));
+        assertEquals("Unexpected property 'folder.folders[0].size'", problem(schema, "{\"folder\":{\"name\":\"a\",\"folders\":[{\"name\":\"b\",\"folders\":[],\"size\":1}]}}"));
+    }
+
+    // ---- unevaluatedProperties, unevaluatedItems, dependentSchemas -----------------------------------------------------
+
+    @Test
+    void unevaluatedPropertiesRejectsWhatNothingEvaluated() {
+        JsonObject schema = schema("{\"properties\":{\"a\":{}},\"unevaluatedProperties\":false}");
+        assertValid(schema, "{\"a\":1}");
+        assertEquals("Unexpected property 'b'", problem(schema, "{\"a\":1,\"b\":2}"));
+    }
+
+    @Test
+    void unevaluatedPropertiesSeesThroughAllOfAndRef() {
+        JsonObject viaAllOf = schema("{\"allOf\":[{\"properties\":{\"a\":{}}}],\"properties\":{\"b\":{}},\"unevaluatedProperties\":false}");
+        assertValid(viaAllOf, "{\"a\":1,\"b\":2}");
+        assertEquals("Unexpected property 'c'", problem(viaAllOf, "{\"c\":1}"));
+        JsonObject viaRef = schema("{\"$defs\":{\"base\":{\"properties\":{\"a\":{}}}},\"$ref\":\"#/$defs/base\",\"unevaluatedProperties\":false}");
+        assertValid(viaRef, "{\"a\":1}");
+        assertEquals("Unexpected property 'z'", problem(viaRef, "{\"z\":1}"));
+    }
+
+    @Test
+    void unevaluatedPropertiesCountsOnlyTheBranchesThatMatch() {
+        JsonObject schema = schema("{\"anyOf\":[{\"properties\":{\"a\":{\"type\":\"string\"}},\"required\":[\"a\"]},{\"properties\":{\"b\":{\"type\":\"integer\"}},\"required\":[\"b\"]}],\"unevaluatedProperties\":false}");
+        assertValid(schema, "{\"a\":\"x\"}");
+        assertValid(schema, "{\"b\":1}");
+        assertValid(schema, "{\"a\":\"x\",\"b\":1}");
+        assertEquals("Unexpected property 'c'", problem(schema, "{\"a\":\"x\",\"c\":1}"));
+        assertEquals("Unexpected property 'a'", problem(schema, "{\"a\":1,\"b\":1}"));
+    }
+
+    @Test
+    void unevaluatedPropertiesFollowsIfThenElse() {
+        JsonObject schema = schema("{\"if\":{\"properties\":{\"kind\":{\"const\":\"x\"}},\"required\":[\"kind\"]},\"then\":{\"properties\":{\"extra\":{}}},\"properties\":{\"kind\":{}},\"unevaluatedProperties\":false}");
+        assertValid(schema, "{\"kind\":\"x\",\"extra\":1}");
+        assertEquals("Unexpected property 'extra'", problem(schema, "{\"kind\":\"y\",\"extra\":1}"));
+    }
+
+    @Test
+    void unevaluatedPropertiesMayBeASchemaAndWorksNested() {
+        JsonObject schema = schema("{\"properties\":{\"a\":{}},\"unevaluatedProperties\":{\"type\":\"integer\"}}");
+        assertValid(schema, "{\"a\":\"s\",\"b\":1}");
+        assertEquals("Property 'b' must be of type integer", problem(schema, "{\"b\":\"s\"}"));
+        JsonObject nested = schema("{\"properties\":{\"o\":{\"properties\":{\"a\":{}},\"unevaluatedProperties\":false}}}");
+        assertEquals("Unexpected property 'o.b'", problem(nested, "{\"o\":{\"a\":1,\"b\":1}}"));
+    }
+
+    @Test
+    void additionalPropertiesEvaluatesEverythingForUnevaluatedProperties() {
+        assertValid(schema("{\"additionalProperties\":true,\"unevaluatedProperties\":false}"), "{\"x\":1}");
+    }
+
+    @Test
+    void unevaluatedItemsRejectsItemsNothingEvaluated() {
+        JsonObject tuple = schema("{\"properties\":{\"l\":{\"prefixItems\":[{\"type\":\"string\"}],\"unevaluatedItems\":false}}}");
+        assertValid(tuple, "{\"l\":[\"a\"]}");
+        assertEquals("Property 'l[1]' is not allowed", problem(tuple, "{\"l\":[\"a\",1]}"));
+        JsonObject contains = schema("{\"properties\":{\"l\":{\"contains\":{\"type\":\"integer\"},\"unevaluatedItems\":{\"type\":\"string\"}}}}");
+        assertValid(contains, "{\"l\":[1,\"a\"]}");
+        assertEquals("Property 'l[1]' must be of type string", problem(contains, "{\"l\":[1,true]}"));
+        assertValid(schema("{\"properties\":{\"l\":{\"items\":{},\"unevaluatedItems\":false}}}"), "{\"l\":[1,2]}");
+    }
+
+    @Test
+    void dependentSchemasApplyWhenThePropertyIsPresent() {
+        JsonObject schema = schema("{\"dependentSchemas\":{\"card\":{\"required\":[\"cvv\"]}}}");
+        assertValid(schema, "{}");
+        assertValid(schema, "{\"card\":\"1\",\"cvv\":\"2\"}");
+        assertEquals("Missing required property 'cvv'", problem(schema, "{\"card\":\"1\"}"));
+    }
+
+    // ---- format ----------------------------------------------------------------------------------------------------
+
+    @Test
+    void formatIsAnAnnotationUnlessAssertionIsSwitchedOn() {
+        JsonObject schema = schema("{\"properties\":{\"d\":{\"type\":\"string\",\"format\":\"date\"}}}");
+        assertValid(schema, "{\"d\":\"nope\"}");
+        assertTrue(SchemaValidator.validate(schema, schema("{\"d\":\"2026-11-11\"}"), true).isEmpty());
+        assertEquals("Property 'd' must be a valid date", SchemaValidator.validate(schema, schema("{\"d\":\"nope\"}"), true).orElse("<valid>"));
+        assertTrue(SchemaValidator.validate(schema("{\"properties\":{\"d\":{\"format\":\"made-up\"}}}"), schema("{\"d\":\"anything\"}"), true).isEmpty());
     }
 }

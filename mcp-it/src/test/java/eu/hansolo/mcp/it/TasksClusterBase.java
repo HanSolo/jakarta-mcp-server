@@ -41,6 +41,7 @@ abstract class TasksClusterBase {
     private GenericContainer<?> b;
     private McpClient           clientA;
     private McpClient           clientB;
+    private Map<String, String> environment;
 
 
     /** Creates, without starting it, the database for this variant on the given network. */
@@ -55,6 +56,7 @@ abstract class TasksClusterBase {
         database = db.container();
         database.start();
         Map<String, String> env = new HashMap<>();
+        environment = env;
         env.put("MCP_TASKS_ENABLED", "true");
         env.put("MCP_TASKS_JDBC_URL", db.url());
         env.put("MCP_TASKS_JDBC_USER", db.user());
@@ -200,5 +202,35 @@ abstract class TasksClusterBase {
         assertEquals(-32603, lost.getJsonObject("error").getInt("code"));
         JsonObject again = awaitStatus(clientB, restartableId, "completed");
         assertEquals("restarted on attempt 2tagged", again.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+    }
+
+    @Test
+    @Order(6)
+    void whenCIsStoppedGracefullyBTakesTheRestartableTaskOverAtOnce() throws Exception {
+        // a lease of a minute: a killed instance would keep its tasks for that long, so only the hand-over in close() can finish this test in time
+        Map<String, String> longLease = new HashMap<>(environment);
+        longLease.put("MCP_TASKS_LEASE_MS", "60000");
+        GenericContainer<?> c = ServerFixture.create(ServerFixture.fixtureWar(), longLease, false).withNetwork(network).withNetworkAliases("mcp-c");
+        try {
+            c.start();
+            McpClient clientC = new McpClient(c.getHost(), c.getMappedPort(ServerFixture.httpPort()));
+            ServerFixture.awaitDeployed(c, clientC);
+            String restartableId = startDemo(clientC, "restartable");
+            String waitingId     = startDemo(clientC, "wait");
+            assertNotEquals("failed", get(clientB, restartableId).getString("status"));
+            assertNotEquals("failed", get(clientB, waitingId).getString("status"));
+            c.getDockerClient().stopContainerCmd(c.getContainerId()).withTimeout(30).exec();
+            JsonObject again = awaitStatus(clientB, restartableId, "completed");
+            assertEquals("restarted on attempt 2tagged", again.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+            JsonObject lost = get(clientB, waitingId);
+            assertEquals("failed", lost.getString("status"));
+            assertEquals(-32603, lost.getJsonObject("error").getInt("code"));
+        } finally {
+            try {
+                c.stop();
+            } catch (RuntimeException ignored) {
+                // already gone
+            }
+        }
     }
 }

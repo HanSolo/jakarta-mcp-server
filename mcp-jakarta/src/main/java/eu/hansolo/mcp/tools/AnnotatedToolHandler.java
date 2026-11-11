@@ -164,13 +164,14 @@ public final class AnnotatedToolHandler implements McpToolHandler {
     private static JsonObject inputSchema(List<Binding> bindings, String where) {
         JsonObjectBuilder properties = Json.createObjectBuilder();
         JsonArrayBuilder required = Json.createArrayBuilder();
+        SchemaGenerator.Defs defs = new SchemaGenerator.Defs();
         boolean anyRequired = false;
         for (Binding binding : bindings) {
             if (binding.kind() != Kind.ARGUMENT) {
                 continue;
             }
             try {
-                properties.add(binding.name(), SchemaGenerator.withHeader(SchemaGenerator.withDescription(SchemaGenerator.schemaFor(binding.type()), binding.description()), binding.header()));
+                properties.add(binding.name(), SchemaGenerator.withHeader(SchemaGenerator.withDescription(SchemaGenerator.schemaFor(binding.type(), defs), binding.description()), binding.header()));
             } catch (IllegalStateException e) {
                 throw new IllegalStateException(where + ", parameter '" + binding.name() + "': " + e.getMessage(), e);
             }
@@ -183,7 +184,9 @@ public final class AnnotatedToolHandler implements McpToolHandler {
         if (anyRequired) {
             schema.add("required", required);
         }
-        return schema.add("additionalProperties", false).build();
+        schema.add("additionalProperties", false);
+        defs.addTo(schema);
+        return schema.build();
     }
 
     private static JsonObject annotations(McpTool tool) {

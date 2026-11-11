@@ -921,7 +921,7 @@ public class McpRequestHandler {
         List<String> wanted = ids.stream().filter(watched::containsKey).toList();
         if (wanted.isEmpty()) {
             return 0;
-        }
+            }
         var views = tasks.views(wanted, subscription.caller());   // one store lookup for all of them
         for (String taskId : wanted) {
             var view = views.get(taskId);
@@ -987,7 +987,7 @@ public class McpRequestHandler {
             throw McpProtocolException.missingClientExtension(Tasks.EXTENSION_ID);
         }
         ParamHeaders.check(declaredHeaders(name, tool), arguments, context.headers());
-        var problem = SchemaValidator.validate(tool.inputSchema(), arguments);
+        var problem = SchemaValidator.validate(tool.inputSchema(), arguments, config.assertFormats());
         if (problem.isPresent()) {
             throw McpProtocolException.invalidArguments("Invalid arguments for tool " + name + ": " + problem.get());
         }

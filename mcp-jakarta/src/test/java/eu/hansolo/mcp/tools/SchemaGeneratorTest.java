@@ -31,7 +31,35 @@ class SchemaGeneratorTest {
     }
 
 
-    record Loop(Loop next) {
+    record Node(String label, Optional<Node> next, List<Node> children) {
+    }
+
+
+    record Wrapper(String name, Node root) {
+    }
+
+
+    record Ping(Optional<Pong> pong) {
+    }
+
+
+    record Pong(Optional<Ping> ping) {
+    }
+
+
+    static class A {
+        record Item(Optional<Item> more) {
+        }
+    }
+
+
+    static class B {
+        record Item(Optional<Item> more) {
+        }
+    }
+
+
+    record Both(A.Item first, B.Item second) {
     }
 
 
@@ -87,9 +115,56 @@ class SchemaGeneratorTest {
     }
 
     @Test
-    void recursiveRecordsAreRejectedWithAClearMessage() {
-        IllegalStateException e = assertThrows(IllegalStateException.class, () -> SchemaGenerator.schemaFor(Loop.class));
-        assertTrue(e.getMessage().contains("recursive"));
+    void aRecursiveRecordIsDescribedWithDefsAndRef() {
+        JsonObject schema = SchemaGenerator.schemaFor(Node.class);
+        assertEquals("#/$defs/Node", schema.getString("$ref"));
+        JsonObject node = schema.getJsonObject("$defs").getJsonObject("Node");
+        assertEquals("object", node.getString("type"));
+        assertEquals(List.of("label", "children"), node.getJsonArray("required").stream().map(v -> ((jakarta.json.JsonString) v).getString()).toList());
+        assertEquals("#/$defs/Node", node.getJsonObject("properties").getJsonObject("next").getString("$ref"));
+        assertEquals("#/$defs/Node", node.getJsonObject("properties").getJsonObject("children").getJsonObject("items").getString("$ref"));
+        assertEquals(1, schema.getJsonObject("$defs").size());
+    }
+
+    @Test
+    void aRecordThatContainsARecursiveOneStaysInlineAndSharesTheDefinition() {
+        JsonObject schema = SchemaGenerator.schemaFor(Wrapper.class);
+        assertEquals("object", schema.getString("type"));
+        assertEquals("#/$defs/Node", schema.getJsonObject("properties").getJsonObject("root").getString("$ref"));
+        assertTrue(schema.getJsonObject("$defs").containsKey("Node"));
+        assertFalse(schema.getJsonObject("$defs").containsKey("Wrapper"));
+    }
+
+    @Test
+    void recordsThatReferToEachOtherBothGetADefinition() {
+        JsonObject schema = SchemaGenerator.schemaFor(Ping.class);
+        assertEquals(java.util.Set.of("Ping", "Pong"), schema.getJsonObject("$defs").keySet());
+        assertEquals("#/$defs/Pong", schema.getJsonObject("$defs").getJsonObject("Ping").getJsonObject("properties").getJsonObject("pong").getString("$ref"));
+        assertEquals("#/$defs/Ping", schema.getJsonObject("$defs").getJsonObject("Pong").getJsonObject("properties").getJsonObject("ping").getString("$ref"));
+    }
+
+    @Test
+    void twoRecursiveRecordsWithTheSameSimpleNameKeepApartInTheDefinitions() {
+        JsonObject defs = SchemaGenerator.schemaFor(Both.class).getJsonObject("$defs");
+        assertEquals(2, defs.size());
+        assertTrue(defs.containsKey("Item"));
+        assertTrue(defs.keySet().stream().anyMatch(name -> name.startsWith("eu.hansolo.mcp.tools.SchemaGeneratorTest$")));
+    }
+
+    @Test
+    void definitionsOfPartsAreCollectedInOneSharedObject() {
+        SchemaGenerator.Defs defs = new SchemaGenerator.Defs();
+        JsonObject first = SchemaGenerator.schemaFor(Node.class, defs);
+        JsonObject second = SchemaGenerator.schemaFor(Wrapper.class, defs);
+        assertFalse(first.containsKey("$defs"));
+        assertFalse(second.containsKey("$defs"));
+        assertEquals(java.util.Set.of("Node"), defs.toJson().keySet());
+    }
+
+    @Test
+    void aTypeWithoutRecursionHasNoDefs() {
+        assertFalse(SchemaGenerator.schemaFor(Person.class).containsKey("$defs"));
+        assertTrue(new SchemaGenerator.Defs().isEmpty());
     }
 
     @Test

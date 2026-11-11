@@ -119,6 +119,24 @@ class AnnotatedToolHandlerTest {
     }
 
 
+    public record Folder(String name, List<Folder> folders) {
+    }
+
+
+    public static class Recursive {
+
+        @McpTool
+        public Folder rename(Folder folder, String name) {
+            return new Folder(name, folder.folders());
+        }
+
+        @McpTool
+        public int count(Folder folder) {
+            return 1 + folder.folders().stream().mapToInt(f -> count(f)).sum();
+        }
+    }
+
+
     public static class NonPublic {
 
         @McpTool
@@ -301,5 +319,20 @@ class AnnotatedToolHandlerTest {
     void hasToolsIsAccurate() {
         assertTrue(ToolScanner.hasTools(Sample.class));
         assertFalse(ToolScanner.hasTools(String.class));
+    }
+
+    @Test
+    void recursiveRecordsPutTheirDefinitionsAtTheRootOfTheInputAndTheOutputSchema() throws Exception {
+        Map<String, McpToolHandler> recursive = ToolScanner.scan(Recursive.class, BeanSource.of(new Recursive())).stream().collect(Collectors.toMap(McpToolHandler::name, t -> t));
+        JsonObject input = recursive.get("rename").inputSchema();
+        assertEquals("#/$defs/Folder", input.getJsonObject("properties").getJsonObject("folder").getString("$ref"));
+        assertEquals(java.util.Set.of("Folder"), input.getJsonObject("$defs").keySet());
+        assertFalse(input.getJsonObject("properties").containsKey("$defs"));
+        JsonObject output = recursive.get("rename").outputSchema();
+        assertEquals("#/$defs/Folder", output.getString("$ref"));
+        assertTrue(output.getJsonObject("$defs").containsKey("Folder"));
+        JsonObject arguments = Json.createObjectBuilder().add("folder", Json.createObjectBuilder().add("name", "a").add("folders", Json.createArrayBuilder().add(Json.createObjectBuilder().add("name", "b").add("folders", Json.createArrayBuilder())))).build();
+        ToolCall call = new ToolCall("count", arguments, JsonObject.EMPTY_JSON_OBJECT, null, null, null, Caller.ANONYMOUS);
+        assertEquals("2", ((ToolResult.Complete) recursive.get("count").call(call)).content().getJsonObject(0).getString("text"));
     }
 }

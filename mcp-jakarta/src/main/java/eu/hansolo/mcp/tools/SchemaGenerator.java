@@ -15,28 +15,48 @@ import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/** Derives JSON Schema (2020-12 vocabulary, no {@code $ref}) from Java types. Fails with a clear message for types it cannot represent. */
+/**
+ * Derives JSON Schema (2020-12 vocabulary) from Java types. Fails with a clear message for types it cannot represent.
+ *
+ * <p>Records that refer to themselves, directly or through other records, collections, maps or {@code Optional}, are described
+ * with {@code $defs} and {@code $ref} ({@code {"$ref": "#/$defs/Node"}}); every other type is written inline. A recursive
+ * record needs a way to end the recursion in the data, so declare that component {@code Optional} or as a collection: a
+ * {@code null} in a component that the schema requires does not validate.
+ */
 public final class SchemaGenerator {
 
     private SchemaGenerator() {
     }
 
 
-    /** The schema of one value of this type; {@code Optional<T>} is the schema of T. */
+    /** The schema of one value of this type; {@code Optional<T>} is the schema of T. Definitions for recursive records are in its {@code $defs}. */
     public static JsonObject schemaFor(Type type) {
-        return schema(type, new HashSet<>());
+        Defs defs = new Defs();
+        JsonObject schema = schemaFor(type, defs);
+        return defs.isEmpty() ? schema : Json.createObjectBuilder(schema).add("$defs", defs.toJson()).build();
     }
 
-    private static JsonObject schema(Type type, Set<Class<?>> path) {
+    /**
+     * The schema of one value of this type, with the definitions of recursive records collected in {@code defs}. A schema that is
+     * a part of a larger one (a parameter of a tool) must have the definitions added to the root of that schema with
+     * {@link Defs#addTo(JsonObjectBuilder)}, because {@code #/$defs/...} is resolved from the root.
+     */
+    public static JsonObject schemaFor(Type type, Defs defs) {
+        return schema(type, defs);
+    }
+
+    private static JsonObject schema(Type type, Defs defs) {
         Class<?> raw = rawClass(type);
         if (raw == Optional.class) {
-            return schema(typeArgument(type, 0), path);
+            return schema(typeArgument(type, 0), defs);
         }
         if (raw == String.class) {
             return object("string");
@@ -68,46 +88,137 @@ public final class SchemaGenerator {
         }
         if (raw.isArray()) {
             Type component = type instanceof GenericArrayType array ? array.getGenericComponentType() : raw.getComponentType();
-            return Json.createObjectBuilder().add("type", "array").add("items", schema(component, path)).build();
+            return Json.createObjectBuilder().add("type", "array").add("items", schema(component, defs)).build();
         }
         if (raw == List.class || raw == Collection.class || raw == Set.class) {
-            JsonObjectBuilder array = Json.createObjectBuilder().add("type", "array").add("items", schema(typeArgument(type, 0), path));
+            JsonObjectBuilder array = Json.createObjectBuilder().add("type", "array").add("items", schema(typeArgument(type, 0), defs));
             return (raw == Set.class ? array.add("uniqueItems", true) : array).build();
         }
         if (raw == Map.class) {
             if (typeArgument(type, 0) != String.class) {
                 throw unsupported(type, "map keys must be String");
             }
-            return Json.createObjectBuilder().add("type", "object").add("additionalProperties", schema(typeArgument(type, 1), path)).build();
+            return Json.createObjectBuilder().add("type", "object").add("additionalProperties", schema(typeArgument(type, 1), defs)).build();
         }
         if (raw.isRecord()) {
-            return recordSchema(raw, path);
+            return recordSchema(raw, defs);
         }
         throw unsupported(type, "supported are scalars, enums, List/Set/Collection/arrays, Map<String,V>, records, Optional and the JSON-P types");
     }
 
-    private static JsonObject recordSchema(Class<?> record, Set<Class<?>> path) {
-        if (!path.add(record)) {
-            throw unsupported(record, "recursive record types cannot be described without $ref");
+    private static JsonObject recordSchema(Class<?> record, Defs defs) {
+        if (!isRecursive(record)) {
+            return recordBody(record, defs);
         }
+        String name = defs.nameOf(record);
+        if (!defs.contains(name)) {
+            defs.put(name, JsonObject.EMPTY_JSON_OBJECT);   // reserved first, so the record's own components find it
+            defs.put(name, recordBody(record, defs));
+        }
+        return Json.createObjectBuilder().add("$ref", "#/$defs/" + name).build();
+    }
+
+    private static JsonObject recordBody(Class<?> record, Defs defs) {
         JsonObjectBuilder properties = Json.createObjectBuilder();
         JsonArrayBuilder required = Json.createArrayBuilder();
         boolean anyRequired = false;
         for (RecordComponent component : record.getRecordComponents()) {
             McpParam info = component.getAnnotation(McpParam.class);
             String name = info != null && !info.name().isEmpty() ? info.name() : component.getName();
-            properties.add(name, withHeader(withDescription(schema(component.getGenericType(), path), info == null ? "" : info.description()), info == null ? "" : info.header()));
+            properties.add(name, withHeader(withDescription(schema(component.getGenericType(), defs), info == null ? "" : info.description()), info == null ? "" : info.header()));
             if (isRequired(component.getGenericType(), info)) {
                 required.add(name);
                 anyRequired = true;
             }
         }
-        path.remove(record);
         JsonObjectBuilder schema = Json.createObjectBuilder().add("type", "object").add("properties", properties);
         if (anyRequired) {
             schema.add("required", required);
         }
         return schema.add("additionalProperties", false).build();
+    }
+
+    /** True if the record can be reached again from its own components. */
+    private static boolean isRecursive(Class<?> record) {
+        try {
+            Set<Class<?>> seen = new HashSet<>();
+            for (RecordComponent component : record.getRecordComponents()) {
+                if (reaches(component.getGenericType(), record, seen)) {
+                    return true;
+                }
+            }
+        } catch (IllegalStateException e) {
+            return false;   // an unsupported type; the schema itself reports it with a better message
+        }
+        return false;
+    }
+
+    private static boolean reaches(Type type, Class<?> target, Set<Class<?>> seen) {
+        Class<?> raw = rawClass(type);
+        if (raw == Optional.class || raw == List.class || raw == Collection.class || raw == Set.class) {
+            return reaches(typeArgument(type, 0), target, seen);
+        }
+        if (raw == Map.class) {
+            return reaches(typeArgument(type, 1), target, seen);
+        }
+        if (raw.isArray()) {
+            return reaches(type instanceof GenericArrayType array ? array.getGenericComponentType() : raw.getComponentType(), target, seen);
+        }
+        if (raw.isRecord()) {
+            if (raw == target) {
+                return true;
+            }
+            if (seen.add(raw)) {
+                for (RecordComponent component : raw.getRecordComponents()) {
+                    if (reaches(component.getGenericType(), target, seen)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /** The {@code $defs} of the recursive records met while building a schema; one instance is shared by all parts of a schema. */
+    public static final class Defs {
+        private final Map<String, JsonObject> schemas = new LinkedHashMap<>();
+        private final Map<Class<?>, String>   names   = new HashMap<>();
+
+
+        public boolean isEmpty() {
+            return schemas.isEmpty();
+        }
+
+        /** The {@code $defs} object. */
+        public JsonObject toJson() {
+            JsonObjectBuilder defs = Json.createObjectBuilder();
+            schemas.forEach(defs::add);
+            return defs.build();
+        }
+
+        /** Adds {@code $defs} to the root schema under construction, if there is any. */
+        public void addTo(JsonObjectBuilder root) {
+            if (!schemas.isEmpty()) {
+                root.add("$defs", toJson());
+            }
+        }
+
+        private String nameOf(Class<?> record) {
+            String name = names.get(record);
+            if (name == null) {
+                name = names.containsValue(record.getSimpleName()) ? record.getName() : record.getSimpleName();
+                names.put(record, name);
+            }
+            return name;
+        }
+
+        private boolean contains(String name) {
+            return schemas.containsKey(name);
+        }
+
+        private void put(String name, JsonObject schema) {
+            schemas.put(name, schema);
+        }
     }
 
     /** Adds a description to an existing schema object. */

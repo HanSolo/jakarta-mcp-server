@@ -11,8 +11,11 @@ import java.math.BigDecimal;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -23,13 +26,15 @@ import java.util.regex.PatternSyntaxException;
  * <ul>
  *   <li>any type: {@code type}, {@code enum}, {@code const}, {@code allOf}, {@code anyOf}, {@code oneOf}, {@code not}, {@code if}/{@code then}/{@code else}, {@code $ref}</li>
  *   <li>numbers: {@code minimum}, {@code maximum}, {@code exclusiveMinimum}, {@code exclusiveMaximum}, {@code multipleOf}</li>
- *   <li>strings: {@code minLength}, {@code maxLength}, {@code pattern}</li>
- *   <li>arrays: {@code items}, {@code prefixItems}, {@code minItems}, {@code maxItems}, {@code uniqueItems}, {@code contains}, {@code minContains}, {@code maxContains}</li>
- *   <li>objects: {@code properties}, {@code required}, {@code additionalProperties}, {@code patternProperties}, {@code propertyNames}, {@code minProperties}, {@code maxProperties}, {@code dependentRequired}</li>
+ *   <li>strings: {@code minLength}, {@code maxLength}, {@code pattern}, and {@code format} when format assertion is switched on (see {@link Formats})</li>
+ *   <li>arrays: {@code items}, {@code prefixItems}, {@code minItems}, {@code maxItems}, {@code uniqueItems}, {@code contains}, {@code minContains}, {@code maxContains}, {@code unevaluatedItems}</li>
+ *   <li>objects: {@code properties}, {@code required}, {@code additionalProperties}, {@code patternProperties}, {@code propertyNames}, {@code minProperties}, {@code maxProperties}, {@code dependentRequired}, {@code dependentSchemas}, {@code unevaluatedProperties}</li>
  * </ul>
  *
- * <p>Not asserted: {@code format} (an annotation by default), {@code unevaluatedProperties}, {@code unevaluatedItems}, and anything
- * else unknown. {@code $ref} is resolved inside the schema only ({@code #}, JSON pointers such as {@code #/$defs/address} and
+ * <p>{@code unevaluatedProperties} and {@code unevaluatedItems} count what the keywords next to them and the schemas applied in
+ * place ({@code $ref}, {@code allOf}, the {@code anyOf}/{@code oneOf} branches that match, {@code if}/{@code then}/{@code else},
+ * {@code dependentSchemas}) have already evaluated. {@code format} is an annotation unless assertion is switched on, which is the
+ * default of JSON Schema 2020-12. Not asserted: anything else unknown. {@code $ref} is resolved inside the schema only ({@code #}, JSON pointers such as {@code #/$defs/address} and
  * {@code $anchor} names); a reference that cannot be resolved there, such as a URL, is ignored and never fetched. {@code pattern}
  * uses {@code java.util.regex} and matches anywhere in the string, as JSON Schema does; one that does not compile is ignored. A tool
  * must still check what a schema cannot say.
@@ -42,16 +47,23 @@ final class SchemaValidator {
     private static final int MAX_NAME  = 64;
 
     private final JsonObject root;
+    private final boolean    formats;
 
 
-    private SchemaValidator(JsonObject root) {
-        this.root = root;
+    private SchemaValidator(JsonObject root, boolean formats) {
+        this.root    = root;
+        this.formats = formats;
     }
 
 
-    /** Returns the first problem, or empty if the arguments satisfy the schema. */
+    /** Returns the first problem, or empty if the arguments satisfy the schema. {@code format} is not asserted. */
     static Optional<String> validate(JsonObject schema, JsonObject arguments) {
-        return Optional.ofNullable(new SchemaValidator(schema).check(schema, arguments, "", 0));
+        return validate(schema, arguments, false);
+    }
+
+    /** Returns the first problem, or empty if the arguments satisfy the schema; with {@code formats}, {@code format} is asserted too. */
+    static Optional<String> validate(JsonObject schema, JsonObject arguments, boolean formats) {
+        return Optional.ofNullable(new SchemaValidator(schema, formats).check(schema, arguments, "", 0));
     }
 
     // ---- one schema against one instance ---------------------------------------------------------------------------
@@ -82,6 +94,9 @@ final class SchemaValidator {
                 case OBJECT -> object(s, (JsonObject) instance, path, depth);
                 default     -> null;
             };
+        }
+        if (problem == null) {
+            problem = unevaluated(s, instance, path, depth);
         }
         return problem;
     }
@@ -180,6 +195,9 @@ final class SchemaValidator {
                 return where(path) + " must match the pattern " + pattern.getString();
             }
         }
+        if (formats && s.get("format") instanceof JsonString format && !Formats.valid(format.getString(), text)) {
+            return where(path) + " must be a valid " + shorten(format.getString());
+        }
         return null;
     }
 
@@ -272,6 +290,16 @@ final class SchemaValidator {
                 }
             }
         }
+        if (s.get("dependentSchemas") instanceof JsonObject dependent) {
+            for (var entry : dependent.entrySet()) {
+                if (value.containsKey(entry.getKey())) {
+                    String problem = check(entry.getValue(), value, path, depth + 1);
+                    if (problem != null) {
+                        return problem;
+                    }
+                }
+            }
+        }
         JsonObject properties = s.get("properties") instanceof JsonObject p ? p : JsonObject.EMPTY_JSON_OBJECT;
         JsonObject patterns   = s.get("patternProperties") instanceof JsonObject p ? p : JsonObject.EMPTY_JSON_OBJECT;
         for (var entry : value.entrySet()) {
@@ -313,6 +341,145 @@ final class SchemaValidator {
             }
         }
         return null;
+    }
+
+    // ---- unevaluatedProperties and unevaluatedItems ------------------------------------------------------------------
+
+    /** Runs when everything else about the instance has been found valid, so the evaluated parts are known. */
+    private String unevaluated(JsonObject s, JsonValue instance, String path, int depth) {
+        if (instance instanceof JsonObject object && s.containsKey("unevaluatedProperties")) {
+            JsonValue rule = s.get("unevaluatedProperties");
+            Set<String> done = evaluatedProperties(s, object, depth, true);
+            for (var entry : object.entrySet()) {
+                if (done.contains(entry.getKey())) {
+                    continue;
+                }
+                String at = member(path, entry.getKey());
+                if (rule == JsonValue.FALSE) {
+                    return "Unexpected property '" + shorten(at) + "'";
+                }
+                String problem = check(rule, entry.getValue(), at, depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+        }
+        if (instance instanceof JsonArray array && s.containsKey("unevaluatedItems")) {
+            JsonValue rule = s.get("unevaluatedItems");
+            BitSet done = evaluatedItems(s, array, depth, true);
+            for (int i = 0; i < array.size(); i++) {
+                if (done.get(i)) {
+                    continue;
+                }
+                if (rule == JsonValue.FALSE) {
+                    return where(index(path, i)) + " is not allowed";
+                }
+                String problem = check(rule, array.get(i), index(path, i), depth + 1);
+                if (problem != null) {
+                    return problem;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** {@code own}: s is the schema whose unevaluatedProperties is being applied, so that keyword evaluates nothing yet. */
+    private Set<String> evaluatedProperties(JsonObject s, JsonObject value, int depth, boolean own) {
+        Set<String> done = new HashSet<>();
+        if (depth > MAX_DEPTH) {
+            return done;
+        }
+        JsonObject properties = s.get("properties") instanceof JsonObject p ? p : JsonObject.EMPTY_JSON_OBJECT;
+        JsonObject patterns   = s.get("patternProperties") instanceof JsonObject p ? p : JsonObject.EMPTY_JSON_OBJECT;
+        for (String key : value.keySet()) {
+            if (properties.containsKey(key)) {
+                done.add(key);
+            }
+            for (String pattern : patterns.keySet()) {
+                Pattern compiled = compile(pattern);
+                if (compiled != null && compiled.matcher(key).find()) {
+                    done.add(key);
+                }
+            }
+        }
+        if (s.containsKey("additionalProperties") || (!own && s.containsKey("unevaluatedProperties"))) {
+            done.addAll(value.keySet());
+        }
+        for (JsonObject applied : applied(s, value, depth)) {
+            done.addAll(evaluatedProperties(applied, value, depth + 1, false));
+        }
+        return done;
+    }
+
+    /** {@code own}: as for {@link #evaluatedProperties}. */
+    private BitSet evaluatedItems(JsonObject s, JsonArray items, int depth, boolean own) {
+        BitSet done = new BitSet(items.size());
+        if (depth > MAX_DEPTH) {
+            return done;
+        }
+        if (s.get("prefixItems") instanceof JsonArray positional) {
+            done.set(0, Math.min(positional.size(), items.size()));
+        }
+        if (s.get("items") instanceof JsonArray positional) {   // draft-07 tuple form
+            done.set(0, Math.min(positional.size(), items.size()));
+            if (s.containsKey("additionalItems")) {
+                done.set(0, items.size());
+            }
+        } else if (s.containsKey("items")) {
+            done.set(0, items.size());
+        }
+        if (s.containsKey("contains")) {
+            for (int i = 0; i < items.size(); i++) {
+                if (check(s.get("contains"), items.get(i), index("", i), depth + 1) == null) {
+                    done.set(i);
+                }
+            }
+        }
+        if (!own && s.containsKey("unevaluatedItems")) {
+            done.set(0, items.size());
+        }
+        for (JsonObject applied : applied(s, items, depth)) {
+            done.or(evaluatedItems(applied, items, depth + 1, false));
+        }
+        return done;
+    }
+
+    /** The subschemas that apply to the same instance as {@code s} does and passed: what their annotations count. */
+    private List<JsonObject> applied(JsonObject s, JsonValue instance, int depth) {
+        List<JsonObject> result = new ArrayList<>();
+        if (s.get("$ref") instanceof JsonString ref && resolve(ref.getString()) instanceof JsonObject target) {
+            result.add(target);
+        }
+        if (s.get("allOf") instanceof JsonArray all) {
+            all.stream().filter(JsonObject.class::isInstance).map(JsonObject.class::cast).forEach(result::add);
+        }
+        for (String keyword : List.of("anyOf", "oneOf")) {
+            if (s.get(keyword) instanceof JsonArray any) {
+                for (JsonValue sub : any) {
+                    if (sub instanceof JsonObject candidate && check(candidate, instance, "", depth + 1) == null) {
+                        result.add(candidate);
+                    }
+                }
+            }
+        }
+        if (s.get("if") instanceof JsonObject condition) {
+            if (check(condition, instance, "", depth + 1) == null) {
+                result.add(condition);
+                if (s.get("then") instanceof JsonObject then) {
+                    result.add(then);
+                }
+            } else if (s.get("else") instanceof JsonObject otherwise) {
+                result.add(otherwise);
+            }
+        }
+        if (instance instanceof JsonObject object && s.get("dependentSchemas") instanceof JsonObject dependent) {
+            for (var entry : dependent.entrySet()) {
+                if (object.containsKey(entry.getKey()) && entry.getValue() instanceof JsonObject sub) {
+                    result.add(sub);
+                }
+            }
+        }
+        return result;
     }
 
     // ---- $ref ------------------------------------------------------------------------------------------------------

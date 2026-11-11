@@ -137,7 +137,7 @@ public class JdbcTaskStore implements TaskStore {
         try (Connection connection = dataSource().getConnection(); Statement statement = connection.createStatement(); ResultSet ignored = statement.executeQuery("SELECT " + COLUMNS + " FROM " + table + " WHERE 1 = 0")) {
             // the table exists and has the columns
         } catch (SQLException e) {
-            throw new IllegalStateException("The task table '" + table + "' cannot be read (" + e.getMessage() + "). Create it with JdbcTaskStore.ddl(...) or set mcp.tasks.jdbc.create-schema=true", e);
+            throw new IllegalStateException("The task table '" + table + "' cannot be read (" + e.getMessage() + "). Create it with JdbcTaskStore.ddl(...) or set mcp.tasks.jdbc.create-schema=true. A table made by 0.7.0 first needs the columns attempt_no, restartable and call_json (ALTER TABLE statements in the class documentation and the CHANGELOG)", e);
         }
     }
 

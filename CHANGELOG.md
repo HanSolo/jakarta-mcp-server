@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Recursive records in `@McpTool` signatures:** a record that refers to itself, directly or through other records, collections, maps or `Optional` (`record Folder(String name, List<Folder> folders)`), gets `$defs` at the root of the tool's `inputSchema` and `outputSchema` and a `$ref` where it is used. Before, the tool failed at startup with "recursive record types cannot be described without $ref". Records without recursion stay inline. `SchemaGenerator.schemaFor(Type, Defs)` and `SchemaGenerator.Defs` let code that builds a larger schema collect the definitions.
+- **Argument validation: `unevaluatedProperties`, `unevaluatedItems` and `dependentSchemas`** are checked, counting what `properties`, `patternProperties`, `additionalProperties`, `prefixItems`, `items`, `contains` and the schemas applied in place (`$ref`, `allOf`, the matching `anyOf`/`oneOf` branches, `if`/`then`/`else`, `dependentSchemas`) have evaluated.
+- **Argument validation: `format`** can be checked with `mcp.validation.formats=true` (default false, as `format` is an annotation in JSON Schema 2020-12): `date-time`, `date`, `time`, `duration`, `email`, `hostname`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `uuid`, `json-pointer`, `regex`. Other format names are accepted.
+- **Tests for the 0.8.0 paths that had none:** `JdbcTaskStoreTest` creates a 0.7.0 table, checks the startup refusal, applies the documented `ALTER TABLE` statements and uses the table; `TasksClusterBase` stops a third instance gracefully (with a lease of a minute) and expects another instance to finish its restartable task.
+
+### Changed
+- A `double` without a fractional part is written as `5`, not `5.0`, in structured results; a `float` is written with the digits it prints with (`0.1`, not `0.10000000149011612`).
+- The startup error for a task table without the columns of 0.8.0 names them and points to the `ALTER TABLE` statements.
+
+
 ## 0.8.0 (2026-11-11)
 
 ### Added

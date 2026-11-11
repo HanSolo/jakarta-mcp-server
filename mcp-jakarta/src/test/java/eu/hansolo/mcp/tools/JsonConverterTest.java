@@ -29,6 +29,10 @@ class JsonConverterTest {
     }
 
 
+    record Tree(String label, Optional<Tree> next, List<Tree> children) {
+    }
+
+
     interface Types {
         List<Integer> ints();
 
@@ -109,5 +113,31 @@ class JsonConverterTest {
         Type points = type("points");
         var nested = Json.createObjectBuilder().add("p", Json.createObjectBuilder().add("x", "bad")).build();
         assertTrue(message(() -> convert(nested, points)).contains("'arg.p.x' must be an integer"));
+    }
+
+    @Test
+    void aRecursiveRecordIsConvertedToAnyDepthUpToTheLimit() {
+        Tree tree = (Tree) convert(parse("{\"label\":\"a\",\"next\":{\"label\":\"b\",\"children\":[]},\"children\":[{\"label\":\"c\",\"children\":[]}]}"), Tree.class);
+        assertEquals("a", tree.label());
+        assertEquals("b", tree.next().orElseThrow().label());
+        assertTrue(tree.next().orElseThrow().next().isEmpty());
+        assertEquals("c", tree.children().get(0).label());
+    }
+
+    @Test
+    void aRecursiveRecordThatIsNestedTooDeeplyIsRejected() {
+        StringBuilder json = new StringBuilder();
+        for (int i = 0; i < 40; i++) {
+            json.append("{\"label\":\"x\",\"next\":");
+        }
+        json.append("{\"label\":\"end\",\"children\":[]}");
+        for (int i = 0; i < 40; i++) {
+            json.append(",\"children\":[]}");
+        }
+        assertTrue(message(() -> convert(parse(json.toString()), Tree.class)).contains("nested too deeply"));
+    }
+
+    private static JsonValue parse(String text) {
+        return Json.createReader(new java.io.StringReader(text)).readValue();
     }
 }

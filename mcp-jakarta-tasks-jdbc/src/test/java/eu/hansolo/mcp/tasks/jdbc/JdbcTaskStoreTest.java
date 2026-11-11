@@ -167,6 +167,46 @@ class JdbcTaskStoreTest {
     }
 
 
+    /** The table as 0.7.0 created it on H2: the current DDL without the three columns of 0.8.0. */
+    private static final String TABLE_OF_0_7_0 = "CREATE TABLE mcp_tasks (id VARCHAR(64) PRIMARY KEY, owner_subject VARCHAR(512) NOT NULL, tool VARCHAR(256) NOT NULL, status VARCHAR(16) NOT NULL, status_message VARCHAR(2048), created_at BIGINT NOT NULL, last_updated_at BIGINT NOT NULL, ttl_ms BIGINT, expires_at BIGINT, poll_interval_ms BIGINT NOT NULL, result_json CLOB, error_json CLOB, input_requests_json CLOB NOT NULL, input_responses_json CLOB NOT NULL, cancel_requested BOOLEAN NOT NULL, worker_id VARCHAR(64), lease_until BIGINT, version_no BIGINT NOT NULL)";
+
+    @Test
+    void aTableFrom070IsRefusedWithAHintAndWorksAfterTheDocumentedAlterTable() throws Exception {
+        DataSource dataSource = dataSource();
+        try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+            statement.execute(TABLE_OF_0_7_0);
+            statement.execute("INSERT INTO mcp_tasks (id, owner_subject, tool, status, status_message, created_at, last_updated_at, ttl_ms, expires_at, poll_interval_ms, result_json, error_json, input_requests_json, input_responses_json, cancel_requested, worker_id, lease_until, version_no) VALUES ('old', 'alice', 'report', 'working', NULL, 1000, 1000, NULL, NULL, 500, NULL, NULL, '{}', '{}', FALSE, 'worker-a', 5000, 3)");
+        }
+        JdbcTaskStore store = new JdbcTaskStore(dataSource, "mcp_tasks", true);   // create-schema leaves the existing table alone
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, store::init);
+        assertTrue(refused.getMessage().contains("cannot be read"));
+        assertTrue(refused.getMessage().contains("0.7.0"));
+
+        try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("ALTER TABLE mcp_tasks ADD COLUMN attempt_no INT NOT NULL DEFAULT 1");
+            statement.execute("ALTER TABLE mcp_tasks ADD COLUMN restartable BOOLEAN NOT NULL DEFAULT FALSE");
+            statement.execute("ALTER TABLE mcp_tasks ADD COLUMN call_json CLOB");
+        }
+        store.init();
+
+        TaskRecord old = store.find("old").orElseThrow();
+        assertEquals(1, old.attempt());
+        assertFalse(old.restartable());
+        assertEquals(null, old.call());
+        assertEquals("worker-a", old.workerId());
+        assertEquals(3L, old.version());
+
+        TaskRecord next = old.edit(T0, edit -> edit.nextAttempt().lease("worker-b", T0.plusSeconds(30)));
+        assertTrue(store.replace(old, next));
+        assertEquals(2, store.find("old").orElseThrow().attempt());
+
+        TaskRecord fresh = TaskRecord.create("new", "alice", "job", T0, 3_600_000L, 2_000L, "worker-a", T0.plusSeconds(30)).restartable(Json.createObjectBuilder().add("tool", "job").build());
+        store.create(fresh);
+        assertEquals(fresh, store.find("new").orElseThrow());
+    }
+
+
     static DataSource dataSource() {
         JdbcDataSource ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
