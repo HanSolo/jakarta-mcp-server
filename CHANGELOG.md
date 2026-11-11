@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-11-11)
 
 ### Added
 - **Recursive records in `@McpTool` signatures:** a record that refers to itself, directly or through other records, collections, maps or `Optional` (`record Folder(String name, List<Folder> folders)`), gets `$defs` at the root of the tool's `inputSchema` and `outputSchema` and a `$ref` where it is used. Before, the tool failed at startup with "recursive record types cannot be described without $ref". Records without recursion stay inline. `SchemaGenerator.schemaFor(Type, Defs)` and `SchemaGenerator.Defs` let code that builds a larger schema collect the definitions.
