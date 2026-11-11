@@ -9,6 +9,11 @@ import jakarta.json.JsonObject;
 public interface TaskContext {
 
     /** The id the client polls with; empty when the work runs inline for a client that did not declare the Tasks extension. */
+    /** Which run of the work this is: 1 for the first, more when the task was restartable and another instance started it again. */
+    default int attempt() {
+        return 1;
+    }
+
     String taskId();
 
     /** The original call: arguments, caller and trace context. Its progress reporter does nothing. */

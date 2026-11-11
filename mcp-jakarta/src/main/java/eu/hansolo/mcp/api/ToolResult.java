@@ -55,8 +55,9 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
      * @param ttlMs      how long the task is kept, counted from its creation, or null for the server default
      * @param noExpiry   true to keep the task without limit (then {@code ttlMs} must be null)
      * @param pollIntervalMs suggested polling interval, or null for the server default
+     * @param restartable true if another instance may run the call again from the start when the instance running it is lost; see {@link #withRestartable()}
      */
-    record Task(TaskWork work, Long ttlMs, boolean noExpiry, Long pollIntervalMs) implements ToolResult {
+    record Task(TaskWork work, Long ttlMs, boolean noExpiry, Long pollIntervalMs, boolean restartable) implements ToolResult {
 
         public Task {
             if (work == null) {
@@ -70,17 +71,35 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
             }
         }
 
+        /** Not restartable. */
+        public Task(TaskWork work, Long ttlMs, boolean noExpiry, Long pollIntervalMs) {
+            this(work, ttlMs, noExpiry, pollIntervalMs, false);
+        }
+
         public Task withTtlMs(long ttlMs) {
-            return new Task(work, ttlMs, false, pollIntervalMs);
+            return new Task(work, ttlMs, false, pollIntervalMs, restartable);
         }
 
         /** Keep the task until the server's store drops it for other reasons. */
         public Task withoutExpiry() {
-            return new Task(work, null, true, pollIntervalMs);
+            return new Task(work, null, true, pollIntervalMs, restartable);
         }
 
         public Task withPollIntervalMs(long pollIntervalMs) {
-            return new Task(work, ttlMs, noExpiry, pollIntervalMs);
+            return new Task(work, ttlMs, noExpiry, pollIntervalMs, restartable);
+        }
+
+        /**
+         * Lets the server run this tool call again from the start, on any instance, if the instance running it stops before it finishes
+         * (at most {@code mcp.tasks.max-attempts} runs in all; then the task fails as usual).
+         *
+         * <p>This is at-least-once: the first run may have done part of the work, and after a long pause it may even still be running
+         * for a moment, so the work must be safe to repeat. To make a restart possible the server stores the call (arguments, caller and
+         * client capabilities) with the task, and runs it with the caller's scopes without checking the access token again.
+         * Answers to earlier input requests are dropped; the work asks again.
+         */
+        public Task withRestartable() {
+            return new Task(work, ttlMs, noExpiry, pollIntervalMs, true);
         }
     }
 

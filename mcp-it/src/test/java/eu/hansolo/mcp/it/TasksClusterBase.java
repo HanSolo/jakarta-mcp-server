@@ -190,11 +190,15 @@ abstract class TasksClusterBase {
 
     @Test
     @Order(5)
-    void whenAIsKilledMidTaskBDeclaresTheTaskFailed() throws Exception {
-        String id = startDemo(clientA, "wait");
-        assertNotEquals("failed", get(clientB, id).getString("status"));
+    void whenAIsKilledMidTaskBDeclaresTheTaskFailedUnlessItIsRestartableThenBRunsItAgain() throws Exception {
+        String lostId        = startDemo(clientA, "wait");
+        String restartableId = startDemo(clientA, "restartable");
+        assertNotEquals("failed", get(clientB, lostId).getString("status"));
+        assertNotEquals("failed", get(clientB, restartableId).getString("status"));
         a.getDockerClient().killContainerCmd(a.getContainerId()).exec();
-        JsonObject lost = awaitStatus(clientB, id, "failed");
+        JsonObject lost = awaitStatus(clientB, lostId, "failed");
         assertEquals(-32603, lost.getJsonObject("error").getInt("code"));
+        JsonObject again = awaitStatus(clientB, restartableId, "completed");
+        assertEquals("restarted on attempt 2", again.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
     }
 }

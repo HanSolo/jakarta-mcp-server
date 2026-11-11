@@ -13,7 +13,9 @@ import eu.hansolo.mcp.protocol.McpProtocolException;
 
 /**
  * Runs as a task when the client supports the Tasks extension. {@code mode}: {@code quick} finishes after {@code millis}; {@code ask}
- * waits for the client's answer; {@code wait} runs until it is cancelled; {@code fail} ends with a JSON-RPC error.
+ * waits for the client's answer; {@code wait} runs until it is cancelled; {@code fail} ends with a JSON-RPC error;
+ * {@code restartable} may be run again by another instance: the first run waits until it
+ * is cancelled or its instance is killed, a later run finishes with the attempt it ran on.
  */
 @ApplicationScoped
 public class TaskDemoTool implements McpToolHandler {
@@ -32,7 +34,7 @@ public class TaskDemoTool implements McpToolHandler {
     public JsonObject inputSchema() {
         return Json.createObjectBuilder().add("type", "object")
                    .add("properties", Json.createObjectBuilder()
-                                          .add("mode", Json.createObjectBuilder().add("type", "string").add("enum", Json.createArrayBuilder().add("quick").add("ask").add("wait").add("fail")))
+                                          .add("mode", Json.createObjectBuilder().add("type", "string").add("enum", Json.createArrayBuilder().add("quick").add("ask").add("wait").add("fail").add("restartable")))
                                           .add("millis", Json.createObjectBuilder().add("type", "integer").add("minimum", 0).add("maximum", 60000)))
                    .add("required", Json.createArrayBuilder().add("mode")).add("additionalProperties", false).build();
     }
@@ -41,7 +43,7 @@ public class TaskDemoTool implements McpToolHandler {
     public ToolResult call(ToolCall call) {
         String mode   = call.stringArgument("mode").orElse("quick");
         int    millis = call.arguments().containsKey("millis") ? call.arguments().getInt("millis") : 100;
-        return ToolResult.task(ctx -> {
+        ToolResult.Task task = ToolResult.task(ctx -> {
             ctx.status("started " + mode);
             switch (mode) {
                 case "ask" -> {
@@ -54,6 +56,15 @@ public class TaskDemoTool implements McpToolHandler {
                     }
                     throw new RequestCancelledException("stopped", null);
                 }
+                case "restartable" -> {
+                    if (ctx.attempt() == 1) {
+                        while (!ctx.isCancelled()) {
+                            Thread.sleep(20);
+                        }
+                        throw new RequestCancelledException("stopped", null);
+                    }
+                    return ToolResult.text("restarted on attempt " + ctx.attempt());
+                }
                 case "fail" -> throw new McpProtocolException(200, -32602, "the demo failed on purpose", null);
                 default -> {
                     Thread.sleep(millis);
@@ -61,5 +72,6 @@ public class TaskDemoTool implements McpToolHandler {
                 }
             }
         });
+        return mode.equals("restartable") ? task.withRestartable() : task;
     }
 }

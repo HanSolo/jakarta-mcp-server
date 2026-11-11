@@ -21,6 +21,8 @@ import jakarta.inject.Singleton;
  *       (default 500) and how long it waits at most (default 3600000).</li>
  *   <li>{@code mcp.tasks.notify-poll-ms}: how often a {@code subscriptions/listen} stream that watches tasks looks in the store for changes
  *       made on other instances (default 2000); changes made on this instance are sent at once.</li>
+ *   <li>{@code mcp.tasks.max-attempts}: how many times a restartable task is run at most, the first run included (default 3). 1 switches
+ *       restarts off.</li>
  * </ul>
  */
 @Singleton
@@ -38,10 +40,11 @@ public class TaskConfig {
     private final long    inputPollMs;
     private final long    inputTimeoutMs;
     private final long    notifyPollMs;
+    private final int     maxAttempts;
 
 
     public TaskConfig() {
-        this(Settings.getBoolean("mcp.tasks.enabled", false), Settings.getLong("mcp.tasks.ttl-ms", 3_600_000L), Settings.getLong("mcp.tasks.poll-interval-ms", 2_000L), Settings.getInt("mcp.tasks.max-result-bytes", 1024 * 1024), Settings.getInt("mcp.tasks.max-running", 100), Settings.get("mcp.tasks.executor"), Settings.getLong("mcp.tasks.heartbeat-ms", 10_000L), Settings.getLong("mcp.tasks.lease-ms", 30_000L), Settings.getLong("mcp.tasks.sweep-ms", 30_000L), Settings.getLong("mcp.tasks.input-poll-ms", 500L), Settings.getLong("mcp.tasks.input-timeout-ms", 3_600_000L), Settings.getLong("mcp.tasks.notify-poll-ms", 2_000L));
+        this(Settings.getBoolean("mcp.tasks.enabled", false), Settings.getLong("mcp.tasks.ttl-ms", 3_600_000L), Settings.getLong("mcp.tasks.poll-interval-ms", 2_000L), Settings.getInt("mcp.tasks.max-result-bytes", 1024 * 1024), Settings.getInt("mcp.tasks.max-running", 100), Settings.get("mcp.tasks.executor"), Settings.getLong("mcp.tasks.heartbeat-ms", 10_000L), Settings.getLong("mcp.tasks.lease-ms", 30_000L), Settings.getLong("mcp.tasks.sweep-ms", 30_000L), Settings.getLong("mcp.tasks.input-poll-ms", 500L), Settings.getLong("mcp.tasks.input-timeout-ms", 3_600_000L), Settings.getLong("mcp.tasks.notify-poll-ms", 2_000L), Settings.getInt("mcp.tasks.max-attempts", 3));
     }
 
     public TaskConfig(boolean enabled, long ttlMs, long pollIntervalMs, int maxResultBytes, int maxRunning, String executor, long heartbeatMs, long leaseMs, long sweepMs, long inputPollMs, long inputTimeoutMs) {
@@ -49,6 +52,11 @@ public class TaskConfig {
     }
 
     public TaskConfig(boolean enabled, long ttlMs, long pollIntervalMs, int maxResultBytes, int maxRunning, String executor, long heartbeatMs, long leaseMs, long sweepMs, long inputPollMs, long inputTimeoutMs, long notifyPollMs) {
+        this(enabled, ttlMs, pollIntervalMs, maxResultBytes, maxRunning, executor, heartbeatMs, leaseMs, sweepMs, inputPollMs, inputTimeoutMs, notifyPollMs, 3);
+    }
+
+    public TaskConfig(boolean enabled, long ttlMs, long pollIntervalMs, int maxResultBytes, int maxRunning, String executor, long heartbeatMs, long leaseMs, long sweepMs, long inputPollMs, long inputTimeoutMs, long notifyPollMs, int maxAttempts) {
+        this.maxAttempts    = Math.max(1, maxAttempts);
         this.notifyPollMs   = Math.max(20L, notifyPollMs);
         this.enabled        = enabled;
         this.ttlMs          = Math.max(1L, ttlMs);
@@ -117,5 +125,10 @@ public class TaskConfig {
     /** How often a {@code subscriptions/listen} stream looks in the task store for changes made by other instances. */
     public long notifyPollMs() {
         return notifyPollMs;
+    }
+
+    /** Most runs of a restartable task, the first included. */
+    public int maxAttempts() {
+        return maxAttempts;
     }
 }

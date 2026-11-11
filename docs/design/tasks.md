@@ -113,7 +113,7 @@ Implementations:
 1. The JDBC store goes in a separate module (`mcp-jakarta-tasks-jdbc`).
 2. Clients that did not declare the extension get the plain result (inline fallback).
 3. The work runs on a managed executor when one is found, else on virtual threads. The lookup order is `mcp.tasks.executor`, then `java:comp/DefaultManagedExecutorService`, then virtual threads.
-4. A task whose worker is lost is marked `failed` (`cancelled` if cancellation was pending). No restart.
+4. A task whose worker is lost is marked `failed` (`cancelled` if cancellation was pending). No restart. **Amended 2026-11-11:** unless the task is restartable; see [restartable-tasks.md](restartable-tasks.md).
 5. 0.6.0 is held until the JDBC store and the two-instance integration test pass.
 
 Differences between this note and the code: the store SPI is `create` / `find` / `findAll` (optional batch lookup, defaults to `find` per id) / `replace` (compare and set on `version`) / `leaseExpired` / `expired` / `delete`, and the owner check lives in `TaskService`, not in the store; an expired task is deleted (not first marked failed); `ToolResult.task(...)` carries `ttlMs`, `noExpiry` and `pollIntervalMs` as options.

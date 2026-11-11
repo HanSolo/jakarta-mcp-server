@@ -26,13 +26,22 @@ import java.util.function.Consumer;
  * @param cancelRequested true once the client asked to cancel
  * @param workerId        the server instance that runs the work, or null
  * @param leaseUntil      until when that instance owns the work; after that another instance may declare the task lost
+ * @param attempt         which run of the work this is, starting at 1; grows when another instance restarts the task
+ * @param restartable     true if the task may be run again from the start when its worker is lost
+ * @param call            the stored tool call ({@code arguments}, {@code caller}, {@code clientCapabilities}, {@code clientInfo}) of a restartable task; otherwise null
  * @param version         starts at 0, grows by one with every change
  */
-public record TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, long version) {
+public record TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, int attempt, boolean restartable, JsonObject call, long version) {
 
     public TaskRecord {
         inputRequests  = inputRequests == null ? JsonObject.EMPTY_JSON_OBJECT : inputRequests;
         inputResponses = inputResponses == null ? JsonObject.EMPTY_JSON_OBJECT : inputResponses;
+        attempt        = Math.max(1, attempt);
+    }
+
+    /** A record that is not restartable, on its first attempt. */
+    public TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, long version) {
+        this(id, owner, tool, status, statusMessage, createdAt, lastUpdatedAt, ttlMs, expiresAt, pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, 1, false, null, version);
     }
 
 
@@ -40,6 +49,11 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
     public static TaskRecord create(String id, String owner, String tool, Instant now, Long ttlMs, long pollIntervalMs, String workerId, Instant leaseUntil) {
         Instant expiresAt = ttlMs == null ? null : now.plusMillis(ttlMs);
         return new TaskRecord(id, owner, tool, TaskStatus.WORKING, null, now, now, ttlMs, expiresAt, pollIntervalMs, null, null, null, null, false, workerId, leaseUntil, 0L);
+    }
+
+    /** The same task, marked restartable, with the call to run again. */
+    public TaskRecord restartable(JsonObject call) {
+        return new TaskRecord(id, owner, tool, status, statusMessage, createdAt, lastUpdatedAt, ttlMs, expiresAt, pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, attempt, true, call, version);
     }
 
     /** The input requests that have no answer yet. */
@@ -80,6 +94,7 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
         private boolean    cancelRequested;
         private String     workerId;
         private Instant    leaseUntil;
+        private int        attempt;
 
         private final TaskRecord base;
 
@@ -95,6 +110,7 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
             this.cancelRequested = base.cancelRequested;
             this.workerId        = base.workerId;
             this.leaseUntil      = base.leaseUntil;
+            this.attempt         = base.attempt;
         }
 
 
@@ -139,8 +155,14 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
             return this;
         }
 
+        /** Starts the next attempt: the number grows by one. */
+        public Editor nextAttempt() {
+            this.attempt = base.attempt + 1;
+            return this;
+        }
+
         private TaskRecord build(Instant now, boolean touch) {
-            return new TaskRecord(base.id, base.owner, base.tool, status, statusMessage, base.createdAt, touch ? now : base.lastUpdatedAt, base.ttlMs, base.expiresAt, base.pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, base.version + 1);
+            return new TaskRecord(base.id, base.owner, base.tool, status, statusMessage, base.createdAt, touch ? now : base.lastUpdatedAt, base.ttlMs, base.expiresAt, base.pollIntervalMs, result, error, inputRequests, inputResponses, cancelRequested, workerId, leaseUntil, attempt, base.restartable, base.call, base.version + 1);
         }
     }
 }

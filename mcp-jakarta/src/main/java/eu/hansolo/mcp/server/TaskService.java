@@ -2,10 +2,12 @@ package eu.hansolo.mcp.server;
 
 import eu.hansolo.mcp.api.Caller;
 import eu.hansolo.mcp.api.InputRequests;
+import eu.hansolo.mcp.api.McpToolHandler;
 import eu.hansolo.mcp.api.ProgressReporter;
 import eu.hansolo.mcp.api.RequestCancelledException;
 import eu.hansolo.mcp.api.Scopes;
 import eu.hansolo.mcp.api.TaskContext;
+import eu.hansolo.mcp.api.TaskWork;
 import eu.hansolo.mcp.api.Tasks;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
@@ -20,8 +22,10 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.json.Json;
+import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
+import jakarta.json.JsonString;
 import jakarta.json.JsonValue;
 
 import javax.naming.InitialContext;
@@ -154,21 +158,22 @@ public class TaskService {
             Instant now         = clock.instant();
             Long    ttl         = task.noExpiry() ? null : task.ttlMs() != null ? task.ttlMs() : Long.valueOf(config.ttlMs());
             long    poll        = task.pollIntervalMs() != null ? task.pollIntervalMs() : config.pollIntervalMs();
-            TaskRecord record   = TaskRecord.create(newId(), owner(call.caller()), call.name(), now, ttl, poll, instanceId, now.plusMillis(config.leaseMs()));
+            TaskRecord created  = TaskRecord.create(newId(), owner(call.caller()), call.name(), now, ttl, poll, instanceId, now.plusMillis(config.leaseMs()));
+            TaskRecord record   = task.restartable() && config.maxAttempts() > 1 ? created.restartable(callToJson(call)) : created;
             try {
                 store.create(record);
             } catch (RuntimeException e) {
                 LOG.log(Level.WARNING, "The task store refused a new task", e);
                 throw McpProtocolException.internal("The task could not be created");
             }
-            Running worker = new Running(record.id());
+            Running worker = new Running(record.id(), record.attempt());
             running.put(record.id(), worker);
             ToolCall detached = new ToolCall(call.name(), call.arguments(), call.clientCapabilities(), call.clientInfo(), call.inputResponses(), call.requestState(), call.caller(), ProgressReporter.NONE, call.trace());
             try {
                 executor().execute(() -> run(worker, task, detached));
             } catch (RejectedExecutionException e) {
                 running.remove(record.id());
-                finish(record.id(), rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server could not start the task"))));
+                finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server could not start the task"))));
                 throw McpProtocolException.internal("The task could not be started");
             }
             started = true;
@@ -197,10 +202,10 @@ public class TaskService {
             try {
                 outcome = task.work().run(new WorkerContext(worker, call));
             } catch (RequestCancelledException e) {
-                finish(id, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.CANCELLED)));
+                finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.CANCELLED)));
                 return;
             } catch (McpProtocolException e) {
-                finish(id, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(e.code(), e.getMessage()))));
+                finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(e.code(), e.getMessage()))));
                 return;
             } catch (Exception e) {
                 LOG.log(Level.WARNING, "The work of task " + abbreviate(id) + " (tool '" + call.name() + "') failed", e);
@@ -208,31 +213,39 @@ public class TaskService {
             }
             if (!(outcome instanceof ToolResult.Complete complete)) {
                 LOG.warning("Tool '" + call.name() + "': the work of a task must end with a complete result");
-                finish(id, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The task did not produce a result"))));
+                finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The task did not produce a result"))));
                 return;
             }
             JsonObject result = McpRequestHandler.toResult(complete);
             if (result.toString().getBytes(StandardCharsets.UTF_8).length > config.maxResultBytes()) {
-                finish(id, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The result is larger than mcp.tasks.max-result-bytes (" + config.maxResultBytes() + ")"))));
+                finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The result is larger than mcp.tasks.max-result-bytes (" + config.maxResultBytes() + ")"))));
                 return;
             }
-            finish(id, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.COMPLETED).result(result)));
+            finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.COMPLETED).result(result)));
         } catch (Throwable t) {
             LOG.log(Level.SEVERE, "Task " + abbreviate(id) + " ended abnormally", t);
             try {
-                finish(id, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The task ended abnormally"))));
+                finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The task ended abnormally"))));
             } catch (RuntimeException ignored) {
                 // the lease will run out and a sweep declares the task lost
             }
         } finally {
-            running.remove(id);
+            running.remove(id, worker);
             slots.release();
         }
     }
 
-    /** Applies a terminal change unless the task is already terminal or gone. */
-    private void finish(String id, UnaryOperator<TaskRecord> change) {
-        mutate(id, rec -> rec.status().isTerminal() ? null : change.apply(rec));
+    /** Applies a terminal change unless the task is already terminal or gone, or another instance or attempt has taken it over. */
+    private void finish(Running worker, UnaryOperator<TaskRecord> change) {
+        if (worker.handedOver) {
+            return;
+        }
+        mutate(worker.id, rec -> rec.status().isTerminal() || stale(rec, worker) ? null : change.apply(rec));
+    }
+
+    /** True if the record is no longer this worker's: another instance, or a later attempt of this one, owns it. */
+    private boolean stale(TaskRecord rec, Running worker) {
+        return !instanceId.equals(rec.workerId()) || rec.attempt() != worker.attempt;
     }
 
 
@@ -375,8 +388,8 @@ public class TaskService {
         for (Running worker : running.values()) {
             try {
                 Instant now = clock.instant();
-                Optional<TaskRecord> rec = mutate(worker.id, current -> current.status().isTerminal() ? null : current.edit(now, false, edit -> edit.lease(instanceId, now.plusMillis(config.leaseMs()))));
-                if (rec.isEmpty() || rec.get().status().isTerminal() || rec.get().cancelRequested()) {
+                Optional<TaskRecord> rec = mutate(worker.id, current -> current.status().isTerminal() || stale(current, worker) ? null : current.edit(now, false, edit -> edit.lease(instanceId, now.plusMillis(config.leaseMs()))));
+                if (rec.isEmpty() || rec.get().status().isTerminal() || rec.get().cancelRequested() || stale(rec.get(), worker)) {
                     worker.cancelled = true;
                     worker.wake();
                 }
@@ -391,13 +404,28 @@ public class TaskService {
         try {
             Instant now = clock.instant();
             for (String id : store.leaseExpired(now, BATCH)) {
-                mutate(id, rec -> rec.status().isTerminal() || rec.leaseUntil() == null || !rec.leaseUntil().isBefore(now) ? null : rec.edit(now, edit -> {
-                    if (rec.cancelRequested()) {
-                        edit.status(TaskStatus.CANCELLED);
-                    } else {
-                        edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server instance running this task stopped before it finished"));
+                boolean[] claimed = new boolean[1];
+                Optional<TaskRecord> after = mutate(id, rec -> {
+                    claimed[0] = false;
+                    if (rec.status().isTerminal() || rec.leaseUntil() == null || !rec.leaseUntil().isBefore(now)) {
+                        return null;
                     }
-                }));
+                    if (rec.cancelRequested()) {
+                        return rec.edit(now, edit -> edit.status(TaskStatus.CANCELLED));
+                    }
+                    if (restartable(rec)) {
+                        if (slots.availablePermits() <= 0) {
+                            return null;
+                        }
+                        claimed[0] = true;
+                        return rec.edit(now, edit -> edit.nextAttempt().lease(instanceId, now.plusMillis(config.leaseMs())).status(TaskStatus.WORKING).statusMessage("Started again (attempt " + (rec.attempt() + 1) + " of " + config.maxAttempts() + ") after the server instance running it stopped")
+                                                                  .inputRequests(JsonObject.EMPTY_JSON_OBJECT).inputResponses(JsonObject.EMPTY_JSON_OBJECT).result(null).error(null));
+                    }
+                    return rec.edit(now, edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server instance running this task stopped before it finished")));
+                });
+                if (claimed[0] && after.isPresent()) {
+                    restart(after.get());
+                }
             }
             for (String id : store.expired(now, BATCH)) {
                 store.delete(id);
@@ -467,11 +495,24 @@ public class TaskService {
             scheduler.shutdownNow();
         }
         for (Running worker : running.values()) {
-            worker.cancelled = true;
-            worker.wake();
             try {
-                finish(worker.id, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server stopped before the task finished"))));
+                Optional<TaskRecord> stored = store.find(worker.id);
+                boolean handOver = stored.isPresent() && !stored.get().status().isTerminal() && restartable(stored.get()) && !stored.get().cancelRequested();
+                if (handOver) {
+                    // a restartable task is handed over: its lease ends now, and the sweep of another instance starts it again; this worker writes nothing more
+                    worker.handedOver = true;
+                    Instant now = clock.instant();
+                    mutate(worker.id, rec -> rec.status().isTerminal() || stale(rec, worker) ? null : rec.edit(now, edit -> edit.lease(instanceId, now.minusMillis(1)).statusMessage("The server instance running this task is stopping")));
+                    worker.cancelled = true;
+                    worker.wake();
+                } else {
+                    worker.cancelled = true;
+                    worker.wake();
+                    finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server stopped before the task finished"))));
+                }
             } catch (RuntimeException e) {
+                worker.cancelled = true;
+                worker.wake();
                 LOG.log(Level.FINE, "Could not close task " + abbreviate(worker.id), e);
             }
         }
@@ -499,6 +540,70 @@ public class TaskService {
             }
         }
         throw new IllegalStateException("Task " + abbreviate(id) + " keeps changing; gave up after " + MAX_RETRIES + " attempts");
+    }
+
+    /** True if another run of this task may be started: it is restartable, has its call, and has attempts left. */
+    private boolean restartable(TaskRecord rec) {
+        return rec.restartable() && rec.call() != null && rec.attempt() < config.maxAttempts();
+    }
+
+    /**
+     * Runs a task that this instance has just claimed again: calls the tool with the stored call and runs the work it returns. The tool
+     * is called on the worker thread, not on a request thread.
+     */
+    private void restart(TaskRecord claimed) {
+        Running worker = new Running(claimed.id(), claimed.attempt());
+        Running old    = running.put(claimed.id(), worker);
+        if (old != null) {
+            old.cancelled = true;
+            old.wake();
+        }
+        if (!slots.tryAcquire()) {
+            running.remove(claimed.id(), worker);
+            finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server had no capacity to start the task again"))));
+            return;
+        }
+        try {
+            ToolCall call = callFromJson(claimed.tool(), claimed.call());
+            TaskWork work = context -> {
+                McpToolHandler tool = registry.find(call.name()).orElseThrow(() -> McpProtocolException.internal("The tool of the task no longer exists"));
+                ToolResult result = tool.call(call);
+                return result instanceof ToolResult.Task again ? again.work().run(context) : result;
+            };
+            executor().execute(() -> run(worker, new ToolResult.Task(work, null, false, null), call));
+            LOG.info("Task " + abbreviate(claimed.id()) + " (tool '" + claimed.tool() + "') runs again here, attempt " + claimed.attempt());
+        } catch (RuntimeException e) {
+            running.remove(claimed.id(), worker);
+            slots.release();
+            LOG.log(Level.WARNING, "Could not start task " + abbreviate(claimed.id()) + " again", e);
+            finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server could not start the task again"))));
+        }
+    }
+
+    /** The call as stored with a restartable task. */
+    static JsonObject callToJson(ToolCall call) {
+        JsonArrayBuilder scopes = Json.createArrayBuilder();
+        call.caller().scopes().stream().sorted().forEach(scopes::add);
+        JsonObjectBuilder caller = Json.createObjectBuilder().add("subject", call.caller().subject()).add("scopes", scopes).add("claims", call.caller().claims());
+        JsonObjectBuilder out    = Json.createObjectBuilder().add("arguments", call.arguments()).add("caller", caller).add("clientCapabilities", call.clientCapabilities());
+        if (call.clientInfo() != null) {
+            out.add("clientInfo", call.clientInfo());
+        }
+        if (call.inputResponses() != null) {
+            out.add("inputResponses", call.inputResponses());
+        }
+        if (call.requestState() != null) {
+            out.add("requestState", call.requestState());
+        }
+        return out.build();
+    }
+
+    static ToolCall callFromJson(String tool, JsonObject stored) {
+        JsonObject caller = stored.getJsonObject("caller");
+        Set<String> scopes = new java.util.HashSet<>();
+        caller.getJsonArray("scopes").forEach(scope -> scopes.add(((JsonString) scope).getString()));
+        Caller restored = new Caller(caller.getString("subject"), scopes, caller.getJsonObject("claims"));
+        return new ToolCall(tool, stored.getJsonObject("arguments"), stored.getJsonObject("clientCapabilities"), stored.getJsonObject("clientInfo"), stored.getJsonObject("inputResponses"), stored.containsKey("requestState") ? stored.getString("requestState") : null, restored, ProgressReporter.NONE);
     }
 
     private JsonObjectBuilder taskFields(TaskRecord rec) {
@@ -539,15 +644,18 @@ public class TaskService {
     private static final class Running {
 
         private final String        id;
+        private final int           attempt;
         private final ReentrantLock lock    = new ReentrantLock();
         private final Condition     changed = lock.newCondition();
 
         private volatile boolean    cancelled;
+        private volatile boolean    handedOver;
         private boolean             woken;
 
 
-        private Running(String id) {
-            this.id = id;
+        private Running(String id, int attempt) {
+            this.id      = id;
+            this.attempt = attempt;
         }
 
 
@@ -596,6 +704,11 @@ public class TaskService {
         }
 
         @Override
+        public int attempt() {
+            return worker.attempt;
+        }
+
+        @Override
         public ToolCall call() {
             return call;
         }
@@ -603,8 +716,8 @@ public class TaskService {
         @Override
         public void status(String message) {
             try {
-                Optional<TaskRecord> rec = mutate(worker.id, current -> current.status().isTerminal() ? null : current.edit(clock.instant(), edit -> edit.statusMessage(message)));
-                if (rec.isEmpty()) {
+                Optional<TaskRecord> rec = mutate(worker.id, current -> current.status().isTerminal() || stale(current, worker) ? null : current.edit(clock.instant(), edit -> edit.statusMessage(message)));
+                if (rec.isEmpty() || stale(rec.get(), worker)) {
                     worker.cancelled = true;
                 }
             } catch (RuntimeException e) {
@@ -622,7 +735,7 @@ public class TaskService {
             Set<String> keys     = requests.keys();
             JsonObject  asked    = requests.toJson();
             Optional<TaskRecord> stored = mutate(worker.id, current -> {
-                if (current.status().isTerminal()) {
+                if (current.status().isTerminal() || stale(current, worker)) {
                     return null;
                 }
                 JsonObjectBuilder merged = Json.createObjectBuilder(current.inputRequests());
@@ -634,7 +747,7 @@ public class TaskService {
                 }
                 return current.edit(clock.instant(), edit -> edit.inputRequests(merged.build()).status(TaskStatus.INPUT_REQUIRED));
             });
-            if (stored.isEmpty() || stored.get().status().isTerminal()) {
+            if (stored.isEmpty() || stored.get().status().isTerminal() || stale(stored.get(), worker)) {
                 worker.cancelled = true;
                 throw new RequestCancelledException("The task has ended", null);
             }
@@ -644,13 +757,13 @@ public class TaskService {
                     throw new RequestCancelledException("The task was cancelled", null);
                 }
                 Optional<TaskRecord> now = store.find(worker.id);
-                if (now.isEmpty() || now.get().status().isTerminal() || now.get().cancelRequested()) {
+                if (now.isEmpty() || now.get().status().isTerminal() || now.get().cancelRequested() || stale(now.get(), worker)) {
                     worker.cancelled = true;
                     throw new RequestCancelledException("The task was cancelled or has expired", null);
                 }
                 JsonObject responses = now.get().inputResponses();
                 if (keys.stream().allMatch(responses::containsKey)) {
-                    mutate(worker.id, current -> current.status() == TaskStatus.INPUT_REQUIRED && current.pendingInputRequests().isEmpty() ? current.edit(clock.instant(), edit -> edit.status(TaskStatus.WORKING)) : null);
+                    mutate(worker.id, current -> !stale(current, worker) && current.status() == TaskStatus.INPUT_REQUIRED && current.pendingInputRequests().isEmpty() ? current.edit(clock.instant(), edit -> edit.status(TaskStatus.WORKING)) : null);
                     JsonObjectBuilder answers = Json.createObjectBuilder();
                     keys.forEach(key -> answers.add(key, responses.get(key)));
                     return answers.build();

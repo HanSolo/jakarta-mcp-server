@@ -47,6 +47,22 @@ class JdbcTaskStoreTest {
     }
 
     @Test
+    void theAttemptTheRestartableFlagAndTheStoredCallSurviveARoundTrip() {
+        JdbcTaskStore store = store();
+        JsonObject call = Json.createObjectBuilder().add("arguments", Json.createObjectBuilder().add("n", "7")).add("caller", Json.createObjectBuilder().add("subject", "alice")).build();
+        TaskRecord created = TaskRecord.create("r1", "alice", "job", T0, 3_600_000L, 2_000L, "worker-a", T0.plusSeconds(30)).restartable(call);
+        store.create(created);
+        assertEquals(created, store.find("r1").orElseThrow());
+        TaskRecord again = created.edit(T0.plusSeconds(40), edit -> edit.nextAttempt().lease("worker-b", T0.plusSeconds(70)));
+        assertTrue(store.replace(created, again));
+        TaskRecord read = store.find("r1").orElseThrow();
+        assertEquals(2, read.attempt());
+        assertTrue(read.restartable());
+        assertEquals(call, read.call());
+        assertEquals("worker-b", read.workerId());
+    }
+
+    @Test
     void aTaskWithoutExpiryAndLeaseKeepsItsNulls() {
         JdbcTaskStore store = store();
         TaskRecord created = new TaskRecord("t2", "bob", "x", TaskStatus.WORKING, null, T0, T0, null, null, 500L, null, null, null, null, false, null, null, 0L);

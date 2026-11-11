@@ -9,8 +9,18 @@
 - **`McpStreamingTest.noLogMessagesAreSentWhetherOrNotALogLevelIsRequested`:** a streamed `tools/call` with and without `io.modelcontextprotocol/logLevel` never produces `notifications/message`.
 - **Keycloak example realm:** new public client `mcp-inspector` (authorization code with PKCE, optional scope `offline_access`) so MCP Inspector can complete a browser login, and `alice` now has the realm's default roles (without them Keycloak refuses offline tokens). Verified with MCP Inspector 2.14.0's CLI: login, `tools/list` and `tools/call` against the example server. Steps in `scripts/client-check/README.md`. Dynamic registration against Keycloak still fails under its default policies (`Trusted Hosts`, `Allowed Client Scopes`); it is deprecated in 2026-07-28.
 
+- **Restartable tasks:** `ToolResult.task(work).withRestartable()` lets another instance run the tool call again from the start when the instance running it is lost or stops (at-least-once; at most `mcp.tasks.max-attempts` runs, default 3; then the task fails as before). The record stores the call (arguments, caller, client capabilities) for such tasks only; `TaskContext.attempt()` returns the run number. A worker whose task another instance has taken over is fenced off: it can no longer renew the lease or write to the record. Design: `docs/design/restartable-tasks.md`.
+
 ### Changed
 - The comment in the root `pom.xml` for the Maven Central upload now names all three modules of the command (`mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc`).
+
+### Upgrading the JDBC task table from 0.7.0
+Restartable tasks add three columns, which `mcp.tasks.jdbc.create-schema` does not add to an existing table. Run once, with your table name (`mcp_tasks` by default); use `LONGTEXT` instead of `TEXT` on MariaDB and MySQL, `CLOB` on H2:
+```sql
+ALTER TABLE mcp_tasks ADD COLUMN attempt_no INT NOT NULL DEFAULT 1;
+ALTER TABLE mcp_tasks ADD COLUMN restartable BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mcp_tasks ADD COLUMN call_json TEXT;
+```
 
 ### Notes
 - **Conformance:** the `tasks-status-notifications` scenario is skipped by the conformance suite itself (it still targets the old POST-SSE channel and waits for a rewrite against `subscriptions/listen`), so it reports 0 checks for every server. `notifications/tasks` is covered by this project's own integration tests.
