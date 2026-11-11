@@ -208,7 +208,10 @@ public final class Elicitation {
     }
 
 
-    /** A form request. Create with {@link Elicitation#form}. */
+    /**
+     * A form request. Create with {@link Elicitation#form}. Without any property it asks for a plain confirmation (the message and
+     * accept/decline buttons), which is what a tool needs before it does something that cannot be undone.
+     */
     public static final class Form implements Request {
 
         private final String                    message;
@@ -269,11 +272,8 @@ public final class Elicitation {
             return add(name, new Property(Kind.MULTI, copyChoices(name, valuesWithTitles)), settings);
         }
 
-        /** The {@code requestedSchema}. */
+        /** The {@code requestedSchema}. A form without properties is a plain confirmation: the user can only accept or decline. */
         public JsonObject schema() {
-            if (properties.isEmpty()) {
-                throw new IllegalStateException("A form needs at least one property");
-            }
             JsonObjectBuilder props    = Json.createObjectBuilder();
             JsonArrayBuilder  required = Json.createArrayBuilder();
             properties.forEach((name, property) -> {

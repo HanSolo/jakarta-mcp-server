@@ -15,6 +15,7 @@ import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.protocol.McpProtocolException;
 import eu.hansolo.mcp.server.McpConfig;
 import eu.hansolo.mcp.server.McpNotifications;
+import eu.hansolo.mcp.server.McpRequestStates;
 import eu.hansolo.mcp.tools.AnnotatedCompletionHandler;
 import eu.hansolo.mcp.tools.BeanSource;
 import eu.hansolo.mcp.tools.CompletionScanner;
@@ -41,7 +42,7 @@ class TicketsTest {
 
     private final FakeTicketStore store         = new FakeTicketStore();
     private final McpNotifications notifications = new McpNotifications(new McpConfig(null, 1024, 0L, "t", "1", null));
-    private final Map<String, McpToolHandler> tools = ToolScanner.scan(TicketTools.class, BeanSource.of(new TicketTools(store, notifications))).stream().collect(Collectors.toMap(McpToolHandler::name, t -> t));
+    private final Map<String, McpToolHandler> tools = ToolScanner.scan(TicketTools.class, BeanSource.of(new TicketTools(store, notifications, new McpRequestStates(new McpConfig())))).stream().collect(Collectors.toMap(McpToolHandler::name, t -> t));
 
 
     private TicketsTest seeded() {
@@ -120,6 +121,15 @@ class TicketsTest {
         assertTrue(error(complete("get_ticket", Json.createObjectBuilder().add("id", 99).build())).contains("no ticket 99"));
     }
 
+    private static JsonObject answer(String action) {
+        return Json.createObjectBuilder().add("confirm", Json.createObjectBuilder().add("action", action)).build();
+    }
+
+    /** The second half of the round trip: the same call again, with the user's answer and the state the server handed out. */
+    private ToolResult retry(JsonObject arguments, ToolResult.InputRequired asked, String action) throws Exception {
+        return tools.get("close_ticket").call(new ToolCall("close_ticket", arguments, ELICIT, null, answer(action), asked.requestState(), ALICE));
+    }
+
     @Test
     void closeAsksFirstThenClosesOnAccept() throws Exception {
         seeded();
@@ -127,9 +137,10 @@ class TicketsTest {
         ToolResult first = call("close_ticket", args, ELICIT, null);
         ToolResult.InputRequired asked = (ToolResult.InputRequired) first;
         assertEquals("elicitation/create", asked.inputRequests().getJsonObject("confirm").getString("method"));
+        assertTrue(asked.inputRequests().getJsonObject("confirm").getJsonObject("params").getJsonObject("requestedSchema").getJsonObject("properties").isEmpty());
+        assertTrue(asked.requestState() != null && !asked.requestState().isBlank());
         assertEquals("OPEN", store.find(3).orElseThrow().status());
-        JsonObject accept = Json.createObjectBuilder().add("confirm", Json.createObjectBuilder().add("action", "accept")).build();
-        ToolResult.Complete done = (ToolResult.Complete) call("close_ticket", args, ELICIT, accept);
+        ToolResult.Complete done = (ToolResult.Complete) retry(args, asked, "accept");
         assertTrue(!done.isError());
         assertEquals("CLOSED", store.find(3).orElseThrow().status());
         assertEquals("replaced toner", store.find(3).orElseThrow().resolution().orElseThrow());
@@ -138,10 +149,51 @@ class TicketsTest {
     @Test
     void closeDeclinedLeavesTheTicketOpen() throws Exception {
         seeded();
-        JsonObject decline = Json.createObjectBuilder().add("confirm", Json.createObjectBuilder().add("action", "decline")).build();
-        ToolResult.Complete result = (ToolResult.Complete) call("close_ticket", Json.createObjectBuilder().add("id", 3).build(), ELICIT, decline);
+        JsonObject args = Json.createObjectBuilder().add("id", 3).build();
+        ToolResult.InputRequired asked = (ToolResult.InputRequired) call("close_ticket", args, ELICIT, null);
+        ToolResult.Complete result = (ToolResult.Complete) retry(args, asked, "decline");
         assertTrue(result.isError());
         assertEquals("OPEN", store.find(3).orElseThrow().status());
+    }
+
+    @Test
+    void anAnswerWithoutTheStateIsRefused() throws Exception {
+        seeded();
+        JsonObject args = Json.createObjectBuilder().add("id", 3).build();
+        McpProtocolException e = assertThrows(McpProtocolException.class, () -> call("close_ticket", args, ELICIT, answer("accept")));
+        assertEquals(-32602, e.code());
+        assertEquals("OPEN", store.find(3).orElseThrow().status());
+    }
+
+    @Test
+    void anAnswerForOneTicketDoesNotCloseAnother() throws Exception {
+        seeded();
+        ToolResult.InputRequired asked = (ToolResult.InputRequired) call("close_ticket", Json.createObjectBuilder().add("id", 3).build(), ELICIT, null);
+        JsonObject other = Json.createObjectBuilder().add("id", 4).build();
+        ToolResult again = retry(other, asked, "accept");
+        assertTrue(again instanceof ToolResult.InputRequired, "the user is asked about ticket 4, nothing is closed");
+        assertEquals("OPEN", store.find(3).orElseThrow().status());
+        assertEquals("OPEN", store.find(4).orElseThrow().status());
+        JsonObject otherResolution = Json.createObjectBuilder().add("id", 3).add("resolution", "something else").build();
+        assertTrue(retry(otherResolution, asked, "accept") instanceof ToolResult.InputRequired, "a changed resolution is a new question too");
+        assertEquals("OPEN", store.find(3).orElseThrow().status());
+    }
+
+    @Test
+    void aStateIssuedToAnotherCallerIsRefused() throws Exception {
+        seeded();
+        JsonObject args = Json.createObjectBuilder().add("id", 3).build();
+        ToolResult.InputRequired asked = (ToolResult.InputRequired) call("close_ticket", args, ELICIT, null);
+        Caller mallory = new Caller("mallory", Set.of("tickets:read", "tickets:write"), NONE);
+        McpProtocolException e = assertThrows(McpProtocolException.class, () -> tools.get("close_ticket").call(new ToolCall("close_ticket", args, ELICIT, null, answer("accept"), asked.requestState(), mallory)));
+        assertEquals(-32602, e.code());
+        assertEquals("OPEN", store.find(3).orElseThrow().status());
+    }
+
+    @Test
+    void aTicketTitleThatLooksSensitiveDoesNotBreakTheQuestion() throws Exception {
+        long id = store.create("Password reset for bob", "locked out", Priority.HIGH, "bob").id();
+        assertTrue(call("close_ticket", Json.createObjectBuilder().add("id", id).build(), ELICIT, null) instanceof ToolResult.InputRequired);
     }
 
     @Test

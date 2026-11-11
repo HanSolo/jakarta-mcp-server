@@ -14,6 +14,8 @@
 - **External job handles:** a task can follow a job in another system without a worker thread. The tool returns `ToolResult.externalTask(handle)` (or `externalTask(taskId -> handle)` to give the other system the task id first); an `ExternalJob` bean per tool answers `poll(taskId, handle)` with `running`, `completed` or `failed`, and `cancel`; the server asks every `mcp.tasks.external-poll-ms` on whichever instance claims the poll. `McpExternalJobs.complete/fail/progress` lets the other system end the task at once through the application's own, authenticated endpoint. New settings `mcp.tasks.external-poll-ms` (5000) and `mcp.tasks.external-max-failures` (5).
 
 ### Changed
+- `Elicitation.form(...)` accepts a form without properties, which asks for a plain accept/decline confirmation. Before, `schema()` and `toJson()` threw "A form needs at least one property", so a confirmation had to be built as raw JSON or with a dummy checkbox.
+
 - A `double` without a fractional part is written as `5`, not `5.0`, in structured results; a `float` is written with the digits it prints with (`0.1`, not `0.10000000149011612`).
 - The startup error for a task table without the columns of 0.8.0 names them and points to the `ALTER TABLE` statements.
 
@@ -26,7 +28,7 @@
 - The 18-argument `TaskRecord` constructor (a record that is not restartable, on its first attempt). Use the canonical constructor, which has `attempt`, `restartable` and `call` before `version` (pass `1, false, null, null, null, 0` for the old behavior; `handle`, `nextPollAt` and `pollFailures` are new, see above). Only custom `TaskStore` implementations that built records this way are affected; `TaskRecord.create(...)` is unchanged.
 
 ### Fixed
-
+- The tickets example's `close_ticket` binds the user's confirmation to the ticket number and resolution it was asked about, with a signed `requestState` for the tool and caller. Before, any answer was accepted for any ticket number on the retry. The example's `TicketTools` constructor takes a `McpRequestStates` as third argument.
 - A server instance that stops while it runs tasks now ends those tasks as `failed` (non-restartable) or hands them over (restartable) reliably. Before, the task could be written as `cancelled` because the stopping worker raced with `close()`, and a heartbeat that was running during shutdown could extend the lease of a task that had just been handed over.
 - A hand-over that cannot be written (the store is unreachable while the server stops) leaves the task `working` so that its lease runs out and another instance takes it over; before, the worker wrote `cancelled`.
 - `JdbcTaskStore` with `mcp.tasks.jdbc.url` keeps up to four idle connections and reuses them. Servers that delete the application's libraries before they destroy its beans (Payara Micro) made drivers that read their own jar on every connect (MariaDB) fail in `TaskService.close()`.

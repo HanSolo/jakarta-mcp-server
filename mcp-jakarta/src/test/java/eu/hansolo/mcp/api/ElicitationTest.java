@@ -78,9 +78,22 @@ class ElicitationTest {
     }
 
     @Test
+    void aFormWithoutPropertiesIsAPlainConfirmation() {
+        Elicitation.Form form = Elicitation.form("Close ticket 3?");
+        JsonObject params = params(form);
+        assertEquals("form", params.getString("mode"));
+        assertEquals("Close ticket 3?", params.getString("message"));
+        JsonObject schema = params.getJsonObject("requestedSchema");
+        assertEquals("object", schema.getString("type"));
+        assertTrue(schema.getJsonObject("properties").isEmpty());
+        assertFalse(schema.containsKey("required"));
+        assertTrue(form.problems(accepted("{}")).isEmpty());
+        assertEquals(List.of("unexpected property 'x'"), form.problems(accepted("{\"x\":1}")));
+    }
+
+    @Test
     void misuseFailsWhenTheFormIsBuilt() {
         assertThrows(IllegalArgumentException.class, () -> Elicitation.form(" "));
-        assertThrows(IllegalStateException.class, () -> Elicitation.form("x").schema());
         assertThrows(IllegalArgumentException.class, () -> Elicitation.form("x").string("a").string("a"));
         assertThrows(IllegalArgumentException.class, () -> Elicitation.form("x").string("", p -> { }));
         assertThrows(IllegalStateException.class, () -> Elicitation.form("x").string("a", p -> p.minimum(1)));

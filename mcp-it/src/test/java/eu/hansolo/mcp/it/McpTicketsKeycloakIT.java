@@ -3,6 +3,7 @@ package eu.hansolo.mcp.it;
 import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
+import jakarta.json.JsonObjectBuilder;
 import jakarta.json.JsonString;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -141,11 +142,20 @@ class McpTicketsKeycloakIT {
         assertEquals("elicitation/create", asked.getJsonObject("inputRequests").getJsonObject("confirm").getString("method"));
         assertEquals("OPEN", structured(call("get_ticket", Json.createObjectBuilder().add("id", id).build(), reader, NONE)).getString("status"));
 
-        JsonObject declined = retry("close_ticket", arguments, "decline");
+        String state = asked.getString("requestState");
+        assertFalse(state.isBlank(), "the question carries a signed state");
+
+        assertEquals(-32602, client.rpc("tools/call", 2, withAnswer("close_ticket", arguments, "accept", null), "close_ticket", writer, ELICIT).json().getJsonObject("error").getInt("code"), "an answer without the state is refused");
+        int otherId = structured(call("create_ticket", Json.createObjectBuilder().add("title", "Other").add("description", "d").build(), writer, NONE)).getInt("id");
+        JsonObject otherTicket = Json.createObjectBuilder().add("id", otherId).build();
+        assertEquals("input_required", result(client.rpc("tools/call", 2, withAnswer("close_ticket", otherTicket, "accept", state), "close_ticket", writer, ELICIT)).getString("resultType"), "an answer for another ticket asks again");
+        assertEquals("OPEN", structured(call("get_ticket", Json.createObjectBuilder().add("id", id).build(), reader, NONE)).getString("status"));
+
+        JsonObject declined = retry("close_ticket", arguments, "decline", state);
         assertTrue(declined.getBoolean("isError"));
         assertEquals("OPEN", structured(call("get_ticket", Json.createObjectBuilder().add("id", id).build(), reader, NONE)).getString("status"));
 
-        JsonObject accepted = retry("close_ticket", arguments, "accept");
+        JsonObject accepted = retry("close_ticket", arguments, "accept", state);
         assertEquals("complete", accepted.getString("resultType"));
         assertFalse(accepted.getBoolean("isError", false));
         JsonObject closed = structured(call("get_ticket", Json.createObjectBuilder().add("id", id).build(), reader, NONE));
@@ -153,10 +163,18 @@ class McpTicketsKeycloakIT {
         assertEquals("done", closed.getString("resolution"));
     }
 
-    /** Repeats the call with the user's answer attached, the second half of a multi round-trip request. */
-    private static JsonObject retry(String tool, JsonObject arguments, String action) throws Exception {
-        JsonObject params = Json.createObjectBuilder().add("name", tool).add("arguments", arguments).add("inputResponses", Json.createObjectBuilder().add("confirm", Json.createObjectBuilder().add("action", action))).build();
-        return result(client.rpc("tools/call", 2, Json.createObjectBuilder(params), tool, writer, ELICIT));
+    /** The parameters of a retry: the user's answer and, if there is one, the state the server handed out with the question. */
+    private static JsonObjectBuilder withAnswer(String tool, JsonObject arguments, String action, String state) {
+        JsonObjectBuilder params = Json.createObjectBuilder().add("name", tool).add("arguments", arguments).add("inputResponses", Json.createObjectBuilder().add("confirm", Json.createObjectBuilder().add("action", action)));
+        if (state != null) {
+            params.add("requestState", state);
+        }
+        return params;
+    }
+
+    /** Repeats the call with the user's answer and the state attached, the second half of a multi round-trip request. */
+    private static JsonObject retry(String tool, JsonObject arguments, String action, String state) throws Exception {
+        return result(client.rpc("tools/call", 2, withAnswer(tool, arguments, action, state), tool, writer, ELICIT));
     }
 
     @Test

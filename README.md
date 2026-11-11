@@ -47,22 +47,59 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 
 The code uses only Jakarta EE 11 Web Profile APIs and has now run on three servers (Payara, WildFly, Open Liberty). Open Liberty also ships its own MCP support (`mcp-1.0`); use this library when you need portability across servers or the 2026-07-28 stateless protocol. The image tags above are defaults chosen from the vendors' naming schemes; if one does not exist, override it with `-Dmcp.image=...`. If you run these and something breaks, the failing assertion plus the container log (printed on startup failure) is the useful bug report. CI (`.github/workflows/ci.yml`) runs all three; All three are required to pass.
 
-## Adding the library to your own application
+## 1. "Adding the library to your own application", step 1 (replace the paragraph after the dependency block)
 
-1. Depend on the library (Jakarta EE 11 APIs stay `provided`; the server supplies JSON-P):
+Replace the version in the example with the current release, and replace "`0.7.0` is the current release ..." with a line that matches
+the real state when you release (I left the number out on purpose: your README and poms disagree on it today, see my chat note).
+Add after the dependency block:
 
-   ```xml
-   <dependency>
-       <groupId>eu.hansolo.mcp</groupId>
-       <artifactId>mcp-jakarta</artifactId>
-       <version>0.7.0</version>
-   </dependency>
-   ```
+> Compile your application with `-parameters` (`<parameters>true</parameters>` in the `maven-compiler-plugin` configuration). Tool methods
+> are described by their parameter names; without the flag the deployment fails, and a failed deployment makes every URL of the application
+> answer 404 until you read the server log. The parent POM of this project sets the flag, but an application with its own parent must set it itself.
+> `@McpParam(name = ...)` names a parameter explicitly if you cannot.
 
-   `0.9.0` is the current release, on Maven Central (the JDBC task store `eu.hansolo.mcp:mcp-jakarta-tasks-jdbc` has the same version). To use the development state instead, run `mvn install` in this project and depend on the `-SNAPSHOT` version in the POMs. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
-2. Register the endpoint classes in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication, `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. OAuth metadata discovery (RFC 9728) needs the application at the host root.
-3. Add `@McpTool`, `@McpResource` and `@McpPrompt` methods to your CDI beans (any bean-defining scope; with `bean-discovery-mode="annotated"` the class needs a scope annotation).
-4. Configure through system properties or environment variables (see the table below). Authentication is off by default.
+## 2. Same list, step 2 (replace)
+
+> 2. Register the endpoint classes in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication,
+     >    `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. **If your `Application` overrides `getClasses()`, the server
+     >    stops scanning for resources: list your own REST resources there too, or they disappear.** OAuth metadata discovery (RFC 9728) needs the
+     >    application at the host root.
+
+## 3. "Writing tools", first line (replace "Compile with `-parameters` (the parent POM does) or name ...")
+
+> Put `@McpTool` on public methods of any CDI bean. Compile with `-parameters` (see "Adding the library") or name parameters with `@McpParam(name = ...)`.
+> A tool that cannot be built (for example a missing parameter name) fails the whole deployment at startup, by design: the message names the class and the method.
+
+Also add to the table of parameter types (line "Parameters"), as a note below it:
+
+> Not converted: `java.time` types (`LocalDate`, `Instant` ...). Take a `String` and parse it in the tool, with `@McpParam(description = "ISO date, 2026-11-24")`.
+> A tool method cannot return a bare `List`; return a record that holds it (`record Visits(List<Visit> visits)`), because the result is a JSON object.
+
+(Check the second sentence against your code before you paste it: I did not re-read the tool return types, so it comes from your notes only.)
+
+## 4. Section "Adding the library", curl example: add a second example right after the first
+
+```bash
+curl -s http://localhost:8080/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/list' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+```
+
+and one sentence: "Every request needs the `Mcp-Method` header and the `_meta` fields; `Mcp-Name` is only sent for calls that name something (`tools/call`, `prompts/get`, `resources/read`)."
+
+## 5. Section "Elicitation": add two bullets after the "Form mode" bullet
+
+> - **A plain confirmation** is a form without properties: `Elicitation.form("Close ticket 3?")`. The user sees the message and can accept or decline; `answer.accepted()` tells which. Bind the question to the call with a signed `requestState` (`McpRequestStates`), so that the answer cannot be replayed with other arguments: see `close_ticket` in the tickets example.
+> - **Keep data out of the message.** The check for sensitive words applies to the message too, so `Elicitation.form("Close " + title + "?")` throws when a ticket is called "Password reset". Put an id or a short fixed text in the message, and let the model show the details in its own reply.
+
+## 6. Tickets example, the `close_ticket` bullet (replace)
+
+> - `close_ticket`: the confirmation flow. The first call returns "input required" with a signed state that names the ticket and the resolution; the client asks the user and repeats the call with the answer and the state. The server keeps nothing in between. A retry with other arguments than the user confirmed asks again, an answer without a valid state is refused, and a client that cannot ask the user gets an error, never a silent close.
+
+## 7. Elicitation status line
+
+`ElicitationTest` has one more test now (13 tests); change "12 tests" accordingly.
 
 ## Build and run
 
