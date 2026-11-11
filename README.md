@@ -59,7 +59,7 @@ The code uses only Jakarta EE 11 Web Profile APIs and has now run on three serve
    </dependency>
    ```
 
-   `0.7.0` is the current release, on Maven Central (the JDBC task store `eu.hansolo.mcp:mcp-jakarta-tasks-jdbc` has the same version). To use the development state instead, run `mvn install` in this project and depend on the `-SNAPSHOT` version in the POMs. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
+   `0.9.0` is the current release, on Maven Central (the JDBC task store `eu.hansolo.mcp:mcp-jakarta-tasks-jdbc` has the same version). To use the development state instead, run `mvn install` in this project and depend on the `-SNAPSHOT` version in the POMs. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 2. Register the endpoint classes in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication, `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. OAuth metadata discovery (RFC 9728) needs the application at the host root.
 3. Add `@McpTool`, `@McpResource` and `@McpPrompt` methods to your CDI beans (any bean-defining scope; with `bean-discovery-mode="annotated"` the class needs a scope annotation).
 4. Configure through system properties or environment variables (see the table below). Authentication is off by default.
@@ -296,7 +296,7 @@ For maintainers. Uses the Central Portal; the namespace `eu.hansolo` must be ver
 
 1. A server `central` in `~/.m2/settings.xml` holding a portal user token, and a GPG key whose public half is on a keyserver.
 2. Run `scripts/release-check.sh` (sources and Javadoc jars without signing; a Javadoc error fails the build, which the real upload would also do). Then set a release version (`mvn versions:set -DnewVersion=<version> -DgenerateBackupPoms=false`), commit, tag.
-3. `mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc` signs and uploads the parent POM, `mcp-jakarta` and `mcp-jakarta-tasks-jdbc` (jar, sources, Javadoc). The `-pl` matters: the plugin bundles every module that is part of the build, so without it the example WARs and `mcp-it` would be uploaded too.
+3. `mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc,mcp-jakarta-bridge-jms` signs and uploads the parent POM, `mcp-jakarta` and `mcp-jakarta-tasks-jdbc` (jar, sources, Javadoc). The `-pl` matters: the plugin bundles every module that is part of the build, so without it the example WARs and `mcp-it` would be uploaded too.
 4. The bundle is validated but not published: open the portal, check it and press Publish. Releases cannot be deleted afterwards. Set `autoPublish` to `true` in the root `pom.xml` to skip this step.
 5. Set the next `-SNAPSHOT` version.
 

@@ -5,7 +5,7 @@
     <!-- groupId and Java packages follow the eu.hansolo namespace. -->
     <groupId>eu.hansolo.mcp</groupId>
     <artifactId>jakarta-mcp-server</artifactId>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.9.0</version>
     <packaging>pom</packaging>
 
     <name>Jakarta MCP Server (parent)</name>
@@ -202,7 +202,7 @@
     </build>
     <profiles>
         <!--
-          Publishing to Maven Central through the Central Portal:  mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc
+          Publishing to Maven Central through the Central Portal:  mvn -Prelease clean deploy -pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc,mcp-jakarta-bridge-jms
           Needs a server "central" in ~/.m2/settings.xml (portal user token) and a GPG key. The upload is not published automatically:
           check the validated bundle in the portal and press Publish (set autoPublish to true to skip that). Only mcp-jakarta, mcp-jakarta-tasks-jdbc and
           this parent POM may be uploaded, hence -pl: the plugin bundles every module in the build, and the upload happens after the last one.
