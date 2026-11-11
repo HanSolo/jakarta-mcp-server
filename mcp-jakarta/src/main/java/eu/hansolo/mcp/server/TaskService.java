@@ -390,7 +390,13 @@ public class TaskService {
         for (Running worker : running.values()) {
             try {
                 Instant now = clock.instant();
-                Optional<TaskRecord> rec = mutate(worker.id, current -> current.status().isTerminal() || stale(current, worker) ? null : current.edit(now, false, edit -> edit.lease(instanceId, now.plusMillis(config.leaseMs()))));
+                if (worker.handedOver) {
+                    continue;                   // close() has ended the lease on purpose: a renewal now would hold the task back for a whole lease
+                }
+                Optional<TaskRecord> rec = mutate(worker.id, current -> worker.handedOver || current.status().isTerminal() || stale(current, worker) ? null : current.edit(now, false, edit -> edit.lease(instanceId, now.plusMillis(config.leaseMs()))));
+                if (worker.handedOver) {
+                    continue;
+                }
                 if (rec.isEmpty() || rec.get().status().isTerminal() || rec.get().cancelRequested() || stale(rec.get(), worker)) {
                     worker.cancelled = true;
                     worker.wake();

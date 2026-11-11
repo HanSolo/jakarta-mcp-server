@@ -131,6 +131,17 @@ abstract class TasksClusterBase {
     }
 
 
+    /** The last lines of the log of a container, also one that has been stopped. */
+    private static String tail(GenericContainer<?> container, int lines) {
+        try {
+            String[] all = container.getLogs().split("\n");
+            return String.join("\n", java.util.Arrays.copyOfRange(all, Math.max(0, all.length - lines), all.length));
+        } catch (RuntimeException e) {
+            return "(log not available: " + e + ")";
+        }
+    }
+
+
     @Test
     @Order(1)
     void aTaskCreatedOnAIsPolledToItsResultOnB() throws Exception {
@@ -220,7 +231,13 @@ abstract class TasksClusterBase {
             assertNotEquals("failed", get(clientB, restartableId).getString("status"));
             assertNotEquals("failed", get(clientB, waitingId).getString("status"));
             c.getDockerClient().stopContainerCmd(c.getContainerId()).withTimeout(30).exec();
-            JsonObject again = awaitStatus(clientB, restartableId, "completed");
+            JsonObject again;
+            try {
+                again = awaitStatus(clientB, restartableId, "completed");
+            } catch (AssertionError e) {
+                // nothing else keeps the logs of these containers: put the end of them into the failure
+                throw new AssertionError(e.getMessage() + "\n--- end of the log of C (stopped) ---\n" + tail(c, 150) + "\n--- end of the log of B ---\n" + tail(b, 60), e);
+            }
             assertEquals("restarted on attempt 2tagged", again.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
             JsonObject lost = get(clientB, waitingId);
             assertEquals("failed", lost.getString("status"));
