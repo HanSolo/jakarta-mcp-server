@@ -57,14 +57,23 @@ final class SkillSet {
         }
     }
 
-    /** A checked skill. */
-    record Skill(McpSkill source, String name, String uri, JsonObject frontmatter, List<File> files) {
+    /**
+     * A checked skill. A dynamic skill has no files here: its frontmatter and content are asked of the source for each request, and its
+     * entry says {@code "resources": "dynamic"}.
+     */
+    record Skill(McpSkill source, String name, String uri, JsonObject frontmatter, List<File> files, boolean dynamic) {
 
         Set<String> requiredScopes() {
             return source.requiredScopes();
         }
 
+        /**
+         * @throws IllegalStateException if a dynamic skill no longer produces a valid {@code SKILL.md}
+         */
         JsonObject toJson() {
+            if (dynamic) {
+                return Json.createObjectBuilder().add("uri", uri).add("frontmatter", liveFrontmatter(this)).add("resources", "dynamic").build();
+            }
             JsonArrayBuilder manifest = Json.createArrayBuilder();
             files.forEach(file -> manifest.add(file.manifestEntry()));
             return Json.createObjectBuilder().add("uri", uri).add("frontmatter", frontmatter).add("resources", manifest).build();
@@ -104,13 +113,44 @@ final class SkillSet {
         return Optional.ofNullable(byUri.get(uri));
     }
 
-    /** A file of a skill and the skill it belongs to. */
-    record Located(Skill skill, File file) {
+    /**
+     * A file of a skill and the skill it belongs to. The bytes of a dynamic skill are only produced by {@link #read()}, so that the
+     * caller's scopes can be checked first.
+     */
+    record Located(Skill skill, String uri, String path, File fixed) {
+
+        /** @return the file, or empty if a dynamic skill has no file at this path (any more) */
+        Optional<File> read() {
+            if (fixed != null) {
+                return Optional.of(fixed);
+            }
+            byte[] bytes = skill.source().file(path);
+            return bytes == null ? Optional.empty() : Optional.of(new File(path, uri, bytes, mimeType(path, bytes), "sha256:" + sha256(bytes)));
+        }
     }
 
+    /** The file at this URI if it belongs to a skill: a known file of a fixed skill, any well-formed path below a dynamic skill. */
     Optional<Located> file(String uri) {
         File file = files.get(uri);
-        return file == null ? Optional.empty() : Optional.of(new Located(owners.get(uri), file));
+        if (file != null) {
+            return Optional.of(new Located(owners.get(uri), uri, file.path(), file));
+        }
+        if (!uri.startsWith(SCHEME)) {
+            return Optional.empty();
+        }
+        String rest = uri.substring(SCHEME.length());
+        int slash = rest.indexOf('/');
+        Skill skill = slash <= 0 ? null : byName.get(rest.substring(0, slash));
+        if (skill == null || !skill.dynamic()) {
+            return Optional.empty();
+        }
+        String path = rest.substring(slash + 1);
+        try {
+            checkPath("MCP skill '" + skill.name() + "'", path);
+        } catch (IllegalStateException e) {
+            return Optional.empty();
+        }
+        return Optional.of(new Located(skill, uri, path, null));
     }
 
     /**
@@ -130,14 +170,27 @@ final class SkillSet {
         }
         String prefix = slash < 0 ? "" : rest.substring(slash + 1) + "/";
         Map<String, String> children = new TreeMap<>();
-        for (File file : skill.files()) {
-            if (!file.path().startsWith(prefix)) {
+        Map<String, String> paths = new LinkedHashMap<>();
+        if (skill.dynamic()) {
+            for (String path : skill.source().paths()) {
+                try {
+                    checkPath("MCP skill '" + name + "'", path);
+                    paths.put(path, mimeType(path, null));
+                } catch (IllegalStateException e) {
+                    LOG.warning("Dynamic skill '" + name + "' lists the invalid path '" + path + "'; it is left out");
+                }
+            }
+        } else {
+            skill.files().forEach(file -> paths.put(file.path(), file.mimeType()));
+        }
+        for (Map.Entry<String, String> file : paths.entrySet()) {
+            if (!file.getKey().startsWith(prefix)) {
                 continue;
             }
-            String below = file.path().substring(prefix.length());
+            String below = file.getKey().substring(prefix.length());
             int next = below.indexOf('/');
             if (next < 0) {
-                children.put(below, file.mimeType());
+                children.put(below, file.getValue());
             } else {
                 children.putIfAbsent(below.substring(0, next), "inode/directory");
             }
@@ -182,6 +235,7 @@ final class SkillSet {
         if (total > MAX_BYTES) {
             LOG.warning(where + " is " + total + " bytes; the specification says servers should not exceed " + MAX_BYTES);
         }
+        boolean dynamic = source.dynamic();
         // SKILL.md first, then the others in path order
         files.sort((a, b) -> a.path().equals(MAIN_FILE) ? -1 : b.path().equals(MAIN_FILE) ? 1 : a.path().compareTo(b.path()));
 
@@ -202,7 +256,29 @@ final class SkillSet {
         if (!(frontmatter.get("description") instanceof jakarta.json.JsonString description) || description.getString().isBlank()) {
             throw new IllegalStateException(where + ": frontmatter 'description' is required");
         }
-        return new Skill(source, name, SCHEME + name + "/" + MAIN_FILE, frontmatter, List.copyOf(files));
+        return new Skill(source, name, SCHEME + name + "/" + MAIN_FILE, frontmatter, dynamic ? List.of() : List.copyOf(files), dynamic);
+    }
+
+    /** The frontmatter of a dynamic skill as it is now, checked like at startup. */
+    private static JsonObject liveFrontmatter(Skill skill) {
+        String where = "MCP skill '" + skill.name() + "'";
+        byte[] main = skill.source().file(MAIN_FILE);
+        if (main == null) {
+            throw new IllegalStateException(where + " has no " + MAIN_FILE + " any more");
+        }
+        JsonObject frontmatter = skill.source().frontmatter();
+        if (frontmatter == null) {
+            try {
+                frontmatter = parseFrontmatter(new String(main, StandardCharsets.UTF_8));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalStateException(where + ": " + e.getMessage(), e);
+            }
+        }
+        if (!(frontmatter.get("name") instanceof jakarta.json.JsonString declared) || !declared.getString().equals(skill.name())
+            || !(frontmatter.get("description") instanceof jakarta.json.JsonString description) || description.getString().isBlank()) {
+            throw new IllegalStateException(where + ": frontmatter needs 'name' equal to '" + skill.name() + "' and a 'description'");
+        }
+        return frontmatter;
     }
 
     private static void checkPath(String where, String path) {
@@ -241,7 +317,7 @@ final class SkillSet {
         if (lower.endsWith(".csv")) {
             return "text/csv";
         }
-        return isUtf8(bytes) ? "text/plain" : "application/octet-stream";
+        return bytes == null || isUtf8(bytes) ? "text/plain" : "application/octet-stream";
     }
 
     static boolean isText(String mimeType) {

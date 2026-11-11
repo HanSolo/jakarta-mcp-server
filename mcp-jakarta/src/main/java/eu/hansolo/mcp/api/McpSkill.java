@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * An Agent Skill this server offers through the Skills extension ({@code io.modelcontextprotocol/skills}, experimental): a directory
@@ -17,6 +18,7 @@ import java.util.Set;
  * {@link #files()}, and announces the extension in {@code server/discover} as soon as one skill exists.
  *
  * <p>Keep the content stable: the digests are computed from what {@link #files()} returns, and hosts bind their approval to them.
+ * A skill whose content is generated for each request can say so with {@link #dynamic()}: it then has no digests.
  */
 public interface McpSkill {
 
@@ -25,6 +27,31 @@ public interface McpSkill {
 
     /** The files by path relative to the skill root, for example {@code SKILL.md} and {@code references/checklist.md}. {@code SKILL.md} is required. */
     Map<String, byte[]> files();
+
+    /**
+     * True if the content of this skill is generated and may differ from one call to the next. The entry in {@code skills/list} and
+     * {@code skills/get} then carries {@code "resources": "dynamic"} instead of a manifest, and no digests are computed: {@link #files()}
+     * is read once at startup to check the skill, then {@link #file} and {@link #paths()} are asked on every request. The specification
+     * lets hosts decline such skills, and a host that accepts one must not treat an earlier approval as covering later content, so
+     * prefer a fixed skill where the content does not really change. The frontmatter in the entry is read again for every listing, so
+     * keep it equal to the frontmatter of the {@code SKILL.md} that {@link #file} returns: hosts compare the two.
+     */
+    default boolean dynamic() {
+        return false;
+    }
+
+    /**
+     * One file of a {@linkplain #dynamic() dynamic} skill, or null if there is none at this path. The default looks into {@link #files()};
+     * override it to generate only the file that was asked for. The path has been checked (no {@code ..}, no odd segments).
+     */
+    default byte[] file(String path) {
+        return files().get(path);
+    }
+
+    /** The paths that exist now, for directory reads of a {@linkplain #dynamic() dynamic} skill. The default is the key set of {@link #files()}. */
+    default Set<String> paths() {
+        return files().keySet();
+    }
 
     /**
      * All frontmatter fields as JSON, or null to have the server read them from {@code SKILL.md}. The server's reader understands the
@@ -66,5 +93,14 @@ public interface McpSkill {
             }
         }
         return new SimpleSkill(name, Map.copyOf(content));
+    }
+
+    /**
+     * A {@linkplain #dynamic() dynamic} skill from text files that are produced anew whenever the skill is read. {@code SKILL.md} must be
+     * among them and begin with frontmatter whose {@code name} is {@code name}; the supplier is called once at startup to check that,
+     * and again for each request.
+     */
+    static McpSkill dynamic(String name, Supplier<Map<String, String>> textFiles) {
+        return new SimpleDynamicSkill(name, textFiles);
     }
 }

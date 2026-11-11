@@ -80,7 +80,7 @@ class SkillSetTest {
             public String name() { return "code-review"; }
             public Map<String, byte[]> files() { return files; }
         };
-        SkillSet.File file = new SkillSet(List.of(binary)).file("skill://code-review/assets/logo.bin").orElseThrow().file();
+        SkillSet.File file = new SkillSet(List.of(binary)).file("skill://code-review/assets/logo.bin").orElseThrow().read().orElseThrow();
         assertEquals("application/octet-stream", file.mimeType());
         assertFalse(SkillSet.isText(file.mimeType()));
     }

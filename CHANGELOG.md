@@ -8,11 +8,16 @@
 - **Argument validation: `format`** can be checked with `mcp.validation.formats=true` (default false, as `format` is an annotation in JSON Schema 2020-12): `date-time`, `date`, `time`, `duration`, `email`, `hostname`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `uuid`, `json-pointer`, `regex`. Other format names are accepted.
 - **Tests for the 0.8.0 paths that had none:** `JdbcTaskStoreTest` creates a 0.7.0 table, checks the startup refusal, applies the documented `ALTER TABLE` statements and uses the table; `TasksClusterBase` stops a third instance gracefully (with a lease of a minute) and expects another instance to finish its restartable task.
 
+- **Dynamic registration of resources, resource templates and completions** through `McpRegistrations` (`addResource`/`replaceResource`/`removeResource`, `addResourceTemplate`/..., `addCompletion`/`replaceCompletion`/`removeCompletion`). Resources and templates send `notifications/resources/list_changed`; the `resources` and `completions` capabilities are switched on by the first registration. Handlers are checked as at startup; a resource that a tool points at with `_meta.ui.resourceUri` cannot be removed; removing a prompt or template drops its completions.
+- **Dynamic skills (`"resources": "dynamic"`):** `McpSkill.dynamic(name, supplier)`, or `dynamic()`, `file(path)` and `paths()` on your own `McpSkill`, for skills whose content is generated per request. The entry in `skills/list` and `skills/get` carries `"resources": "dynamic"` instead of a manifest; frontmatter, files and directory listings are produced for every request, after the scope check. `SkillSet.Located` now reads its file lazily (`read()`).
+- **New module `mcp-jakarta-bridge-jms`:** `JmsNotificationBridge`, a ready-made `McpNotificationBridge` on a Jakarta Messaging topic. Set `mcp.bridge.jms.connection-factory` (JNDI name); topic, credentials, time to live and reconnect pause are optional settings. Non-durable subscription per instance, a listener thread that polls with `receive` (works on container-managed connection factories) and reconnects, malformed messages ignored. Without the setting it does nothing.
+
 ### Changed
 - A `double` without a fractional part is written as `5`, not `5.0`, in structured results; a `float` is written with the digits it prints with (`0.1`, not `0.10000000149011612`).
 - The startup error for a task table without the columns of 0.8.0 names them and points to the `ALTER TABLE` statements.
 
 ### Fixed
+
 - A server instance that stops while it runs tasks now ends those tasks as `failed` (non-restartable) or hands them over (restartable) reliably. Before, the task could be written as `cancelled` because the stopping worker raced with `close()`, and a heartbeat that was running during shutdown could extend the lease of a task that had just been handed over.
 - A hand-over that cannot be written (the store is unreachable while the server stops) leaves the task `working` so that its lease runs out and another instance takes it over; before, the worker wrote `cancelled`.
 - `JdbcTaskStore` with `mcp.tasks.jdbc.url` keeps up to four idle connections and reuses them. Servers that delete the application's libraries before they destroy its beans (Payara Micro) made drivers that read their own jar on every connect (MariaDB) fail in `TaskService.close()`.

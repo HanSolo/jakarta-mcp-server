@@ -28,6 +28,7 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 | --- | --- |
 | `mcp-jakarta` | Library JAR: tool, resource and prompt APIs (`@McpTool`, `@McpResource`, `@McpPrompt` and the matching handler interfaces), protocol handling (`McpRequestHandler`, container-independent), OAuth resource-server code (`auth`), JAX-RS resources, CDI wiring |
 | `mcp-jakarta-tasks-jdbc` | Optional JAR: `JdbcTaskStore`, a `TaskStore` in a relational database (see [Tasks](#tasks-experimental)) |
+| `mcp-jakarta-bridge-jms` | Optional JAR: `JmsNotificationBridge`, a `McpNotificationBridge` on a Jakarta Messaging topic (see [Several instances](#several-instances-the-bridge)) |
 | `mcp-example` | WAR deployed at the context root: annotated tools (`echo`, `add`, `repeat`), a handler-style tool (`greet`, multi round-trip), a resource (`config://server/info`), a template (`greeting://{name}`) and a prompt (`summarize`) |
 | `mcp-example-tickets` | A realistic example: a support-ticket service with a database, scopes and a confirmation step (see [The tickets example](#the-tickets-example)). Needs authentication |
 | `mcp-example-conformance` | A fixture WAR with the tools, prompts and resources the official conformance suite expects (see [Conformance suite](#conformance-suite)). A test aid, not an example to copy |
@@ -326,6 +327,7 @@ Each setting is a system property, or the same name upper-cased with `.` and `-`
 | `mcp.tasks.max-attempts` | 3 | Most runs of a restartable task, the first included; 1 switches restarts off |
 | `mcp.tasks.notify-poll-ms` | 2000 | How often a `subscriptions/listen` stream that watches tasks looks in the store for changes made on other instances |
 | `mcp.tasks.input-poll-ms`, `mcp.tasks.input-timeout-ms` | 500, 3600000 | How often work that waits for input looks for the answer, and how long it waits at most |
+| `mcp.bridge.jms.connection-factory` | none | JMS notification bridge (module `mcp-jakarta-bridge-jms`): JNDI name of a `ConnectionFactory`; switches the bridge on. Also `.topic` (default `mcp.notifications`), `.user`, `.password`, `.ttl-ms` (60000), `.reconnect-ms` (5000) |
 | `mcp.tasks.datasource` or `mcp.tasks.jdbc.url`, `.user`, `.password` | none | JDBC task store (module `mcp-jakarta-tasks-jdbc`): JNDI name of a `DataSource`, or a JDBC URL |
 | `mcp.tasks.jdbc.table`, `mcp.tasks.jdbc.create-schema` | `mcp_tasks`, false | Table name and whether to create the table at startup |
 | `mcp.listen.keepalive-ms` | 15000 | How often an idle stream gets a comment line (`subscriptions/listen` streams and streamed `tools/call`); this is also how a vanished client is noticed and its thread released |
@@ -461,6 +463,15 @@ public class TopicBridge implements McpNotificationBridge {
     }
 }
 ```
+
+**Ready-made: Jakarta Messaging.** If you already run a JMS broker, you do not have to write this. Add `eu.hansolo.mcp:mcp-jakarta-bridge-jms` to the application (the JMS API comes from the server or your broker's client) and set `mcp.bridge.jms.connection-factory` to the JNDI name of a `jakarta.jms.ConnectionFactory` on every instance:
+
+```
+mcp.bridge.jms.connection-factory=java:/JmsXA        # or your server's name for it
+mcp.bridge.jms.topic=mcp.notifications               # default; created through JMSContext.createTopic
+```
+
+`JmsNotificationBridge` sends each change as a non-persistent text message (the JSON of `McpChange.encode()`, 60 s time to live) and listens with a non-durable subscription of its own on every instance, so a change made while an instance is down is lost there, as described below. The listener polls with `receive` in a thread of its own, because Jakarta EE containers do not let application code set a `MessageListener` on a container-managed connection factory; if the connection fails it reconnects every `mcp.bridge.jms.reconnect-ms`. A message that is not a change of this version is ignored and logged. Without the setting the bean does nothing, so the jar is harmless where the bridge is not wanted. To use a connection factory you create yourself, build `new JmsNotificationBridge(factory, topic, notifications::receive)` in a producer method and call `start()`; leave the setting unset so the built-in bean stays idle. **Secure the topic:** whoever may publish to it can make every instance send `list_changed` and `resources/updated` notifications to its clients, and nothing more (a message carries no data a client acts on), so give the servers' broker account the only rights on it. Status: unit-tested against an embedded Artemis broker (two bridges as two instances, reconnect after a broker restart, malformed messages). Not yet tried on the three servers' own JMS providers.
 
 Then one call anywhere reaches every instance: `notifications.resourceUpdated("ticket://7")` tells the local clients at once and passes the change to `publish`; on the other instances `receive` tells theirs. What to know:
 
@@ -606,8 +617,8 @@ Everything is checked at startup, and a violation stops the application with the
 Limits to know about:
 
 - The built-in frontmatter reader handles the flat subset of YAML: `key: value` with plain, quoted, boolean and integer scalars, and `>` / `|` blocks. Nested values (`metadata:`, lists) are refused with a message; override `McpSkill.frontmatter()` to give the fields as JSON. Hosts compare these fields with their own parse of the file, so the two must agree: `version: 3` is a number here, as it is in YAML, and `version: "3"` is a string.
-- The digests are taken at startup; a skill whose `files()` changes later is not noticed.
-- Generated skills (`"resources": "dynamic"`) are not supported.
+- The digests of a fixed skill are taken at startup; a fixed skill whose `files()` changes later is not noticed (make it dynamic if it should).
+- Generated skills are supported with `McpSkill.dynamic(name, supplier)` (or `dynamic()` returning true, with `file(path)` and `paths()` overridden to produce only what is asked for). The entry then says `"resources": "dynamic"` and has no digests; `files()` is read once at startup for the same checks as a fixed skill, then the frontmatter, each file and the directory listings are produced anew for every request (scopes are checked before your code runs). The specification lets hosts decline dynamic skills, and a host that accepts one must not treat an earlier approval as covering later content, so use a fixed skill wherever the content does not really change. Keep the frontmatter of the `SKILL.md` you generate equal to its `name` and a non-empty `description`: a dynamic skill that stops producing a valid one is left out of `skills/list` (with a warning) and `skills/get` answers an internal error. Skills themselves are still registered at startup only.
 - `skills/list` returns whole entries, never a split manifest; `requiredScopes()` hides a skill from callers without the scopes.
 - Tested with unit tests and `SkillsIT` (passes on Payara, WildFly and Open Liberty) against the fixture WAR, which serves one skill from memory and one from the WAR. No host that loads skills has been tried against it.
 
@@ -752,7 +763,7 @@ The `docker run` line above sets `MCP_TASKS_ENABLED=true`, because the Tasks ext
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; skills with `"resources": "dynamic"`; remote `$ref` in argument validation (on purpose, see Argument validation); 2025-11-25 compatibility (on purpose: only 2026-07-28 is supported).
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); ready-made bridge transports other than Jakarta Messaging (for anything else you write `McpNotificationBridge` yourself, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; remote `$ref` in argument validation (on purpose, see Argument validation); 2025-11-25 compatibility (on purpose: only 2026-07-28 is supported).
 
 ## Decisions worth a second look
 

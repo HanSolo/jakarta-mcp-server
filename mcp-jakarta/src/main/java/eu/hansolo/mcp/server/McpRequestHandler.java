@@ -582,7 +582,13 @@ public class McpRequestHandler {
     private JsonObject skillsList(RequestContext context) {
         Page<SkillSet.Skill> page = page(context, registry.skills().list(), SkillSet.Skill::requiredScopes, SkillSet.Skill::name);
         JsonArrayBuilder skills = Json.createArrayBuilder();
-        page.items().forEach(skill -> skills.add(skill.toJson()));
+        for (SkillSet.Skill skill : page.items()) {
+            try {
+                skills.add(skill.toJson());
+            } catch (IllegalStateException e) {
+                LOG.log(Level.WARNING, "Skill '" + skill.name() + "' is left out of the listing", e);   // a dynamic skill that no longer produces a valid SKILL.md
+            }
+        }
         return listResult("skills", skills, page.nextCursor());
     }
 
@@ -592,8 +598,15 @@ public class McpRequestHandler {
         if (!visible(context.caller(), skill.requiredScopes())) {
             throw new AuthChallengeException("Insufficient scope for skill " + abbreviate(skill.name()), String.join(" ", skill.requiredScopes()));
         }
+        JsonObject entry;
+        try {
+            entry = skill.toJson();
+        } catch (IllegalStateException e) {
+            LOG.log(Level.WARNING, "Skill '" + skill.name() + "' cannot be described", e);
+            throw McpProtocolException.internal("Skill unavailable");
+        }
         boolean perCaller = authConfig.enabled() && !registry.scopedPrimitives().isEmpty();
-        return Json.createObjectBuilder().add("resultType", "complete").add("skill", skill.toJson()).add("ttlMs", config.cacheTtlMs()).add("cacheScope", perCaller ? "private" : "public").build();
+        return Json.createObjectBuilder().add("resultType", "complete").add("skill", entry).add("ttlMs", config.cacheTtlMs()).add("cacheScope", perCaller ? "private" : "public").build();
     }
 
     private JsonObject directoryRead(RequestContext context) {

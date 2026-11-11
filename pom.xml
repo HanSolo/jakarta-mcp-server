@@ -46,6 +46,7 @@
     <modules>
         <module>mcp-jakarta</module>
         <module>mcp-jakarta-tasks-jdbc</module>
+        <module>mcp-jakarta-bridge-jms</module>
         <module>mcp-example</module>
         <module>mcp-example-tickets</module>
         <module>mcp-example-conformance</module>

@@ -3,6 +3,7 @@ package eu.hansolo.mcp.server;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import eu.hansolo.mcp.api.Apps;
 import eu.hansolo.mcp.api.Icon;
@@ -16,6 +17,8 @@ import eu.hansolo.mcp.api.McpToolHandler;
 import eu.hansolo.mcp.api.Meta;
 import eu.hansolo.mcp.api.ResourceCall;
 import eu.hansolo.mcp.api.ResourceResult;
+import eu.hansolo.mcp.protocol.ErrorCodes;
+import eu.hansolo.mcp.protocol.McpProtocolException;
 import eu.hansolo.mcp.tools.CdiAnnotationScanner;
 
 import java.net.URI;
@@ -126,7 +129,7 @@ public class McpRegistry {
         var skillFile = skills.file(uri);
         if (skillFile.isPresent()) {
             SkillSet.Located located = skillFile.get();
-            return Optional.of(new ResolvedResource(located.skill().requiredScopes(), Map.of(), call -> ResourceResult.of(skillContent(located.file()))));
+            return Optional.of(new ResolvedResource(located.skill().requiredScopes(), Map.of(), call -> ResourceResult.of(skillContent(located.read().orElseThrow(() -> new McpProtocolException(200, ErrorCodes.INVALID_PARAMS, "Resource not found", Json.createObjectBuilder().add("uri", located.uri()).build()))))));
         }
         for (TemplateEntry entry : templates.values()) {
             Optional<Map<String, String>> variables = entry.template().match(uri);
