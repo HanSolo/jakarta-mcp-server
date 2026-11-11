@@ -1,6 +1,7 @@
 package eu.hansolo.mcp.itfixture;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import eu.hansolo.mcp.api.Elicitation;
@@ -19,6 +20,9 @@ import eu.hansolo.mcp.protocol.McpProtocolException;
  */
 @ApplicationScoped
 public class TaskDemoTool implements McpToolHandler {
+
+    @Inject
+    RequestTag requestTag;
 
     @Override
     public String name() {
@@ -43,6 +47,8 @@ public class TaskDemoTool implements McpToolHandler {
     public ToolResult call(ToolCall call) {
         String mode   = call.stringArgument("mode").orElse("quick");
         int    millis = call.arguments().containsKey("millis") ? call.arguments().getInt("millis") : 100;
+        // a restarted call runs outside a request: this read only works if the library starts a request scope for it
+        String tag    = mode.equals("restartable") ? requestTag.value() : "";
         ToolResult.Task task = ToolResult.task(ctx -> {
             ctx.status("started " + mode);
             switch (mode) {
@@ -63,7 +69,7 @@ public class TaskDemoTool implements McpToolHandler {
                         }
                         throw new RequestCancelledException("stopped", null);
                     }
-                    return ToolResult.text("restarted on attempt " + ctx.attempt());
+                    return ToolResult.text("restarted on attempt " + ctx.attempt() + tag);
                 }
                 case "fail" -> throw new McpProtocolException(200, -32602, "the demo failed on purpose", null);
                 default -> {

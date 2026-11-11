@@ -139,6 +139,39 @@ class RestartableTasksTest {
     }
 
     @Test
+    void aGracefulShutdownHandsARestartableTaskOverInsteadOfFailingIt() throws Exception {
+        TaskService a = service(3);
+        TaskService b = service(3);
+        String id = a.create(first(), call()).getString("taskId");
+        a.close();
+        TaskRecord handed = store.find(id).orElseThrow();
+        assertEquals("working", handed.status().wire());
+        assertTrue(handed.leaseUntil().isBefore(clock.instant()));
+
+        b.sweep();                              // no clock advance: the lease already ended with the shutdown
+        TaskRecord done = awaitStatus(id, "completed");
+        assertEquals(2, done.attempt());
+
+        hold.countDown();                       // the worker of the stopped instance ends: it must write nothing
+        Thread.sleep(300);
+        assertEquals(2, store.find(id).orElseThrow().attempt());
+        assertEquals("completed", store.find(id).orElseThrow().status().wire());
+        b.close();
+    }
+
+    @Test
+    void aGracefulShutdownStillFailsATaskThatIsNotRestartable() throws Exception {
+        TaskService a = service(3);
+        String id = a.create(ToolResult.task(ctx -> {
+            hold.await(10, TimeUnit.SECONDS);
+            return ToolResult.text("x");
+        }), call()).getString("taskId");
+        a.close();
+        assertEquals("failed", store.find(id).orElseThrow().status().wire());
+        hold.countDown();
+    }
+
+    @Test
     void theCallSurvivesTheRoundTripThroughJson() {
         ToolCall original = new ToolCall("job", Json.createObjectBuilder().add("n", "7").build(), TASKS, Json.createObjectBuilder().add("name", "client").build(), Json.createObjectBuilder().add("k", Json.createObjectBuilder().add("action", "accept")).build(), "state-1", ALICE);
         ToolCall restored = TaskService.callFromJson("job", TaskService.callToJson(original));

@@ -18,7 +18,9 @@ import eu.hansolo.mcp.tasks.TaskRecord;
 import eu.hansolo.mcp.tasks.TaskStatus;
 import eu.hansolo.mcp.tasks.TaskStore;
 import jakarta.annotation.PreDestroy;
+import jakarta.enterprise.context.control.RequestContextController;
 import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.spi.CDI;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.json.Json;
@@ -567,7 +569,15 @@ public class TaskService {
             ToolCall call = callFromJson(claimed.tool(), claimed.call());
             TaskWork work = context -> {
                 McpToolHandler tool = registry.find(call.name()).orElseThrow(() -> McpProtocolException.internal("The tool of the task no longer exists"));
-                ToolResult result = tool.call(call);
+                ToolResult result;
+                RequestContextController requestContext = activateRequestContext();
+                try {
+                    result = tool.call(call);
+                } finally {
+                    if (requestContext != null) {
+                        requestContext.deactivate();
+                    }
+                }
                 return result instanceof ToolResult.Task again ? again.work().run(context) : result;
             };
             executor().execute(() -> run(worker, new ToolResult.Task(work, null, false, null), call));
@@ -577,6 +587,20 @@ public class TaskService {
             slots.release();
             LOG.log(Level.WARNING, "Could not start task " + abbreviate(claimed.id()) + " again", e);
             finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server could not start the task again"))));
+        }
+    }
+
+    /**
+     * Starts a request scope on this thread, so that the tool can use request-scoped beans when it is called again outside a request.
+     * Returns null if the container offers none (then such a bean fails with the container's own exception).
+     */
+    private static RequestContextController activateRequestContext() {
+        try {
+            RequestContextController controller = CDI.current().select(RequestContextController.class).get();
+            return controller.activate() ? controller : null;
+        } catch (RuntimeException | LinkageError e) {
+            LOG.log(Level.FINE, "No request scope for the tool call of a restarted task", e);
+            return null;
         }
     }
 

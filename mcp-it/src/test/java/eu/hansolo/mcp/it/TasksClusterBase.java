@@ -199,6 +199,6 @@ abstract class TasksClusterBase {
         JsonObject lost = awaitStatus(clientB, lostId, "failed");
         assertEquals(-32603, lost.getJsonObject("error").getInt("code"));
         JsonObject again = awaitStatus(clientB, restartableId, "completed");
-        assertEquals("restarted on attempt 2", again.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
+        assertEquals("restarted on attempt 2tagged", again.getJsonObject("result").getJsonArray("content").getJsonObject(0).getString("text"));
     }
 }
