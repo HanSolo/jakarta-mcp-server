@@ -24,6 +24,7 @@ public class AdminResource {
 
     @Inject McpRegistrations registrations;
     @Inject McpNotifications notifications;
+    @Inject JmsTestBridge jms;
 
 
     /** Adds a tool with this name that answers "hello from <name>". 409 if the name is taken. */
@@ -64,6 +65,14 @@ public class AdminResource {
         } catch (IllegalArgumentException e) {
             return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
         }
+    }
+
+    /** Waits (up to 30 s) until the JMS bridge holds its subscription; {@code configured} is false when MCP_IT_JMS_URL is unset. */
+    @GET
+    @Path("/jms/ready")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String jmsReady() throws InterruptedException {
+        return Json.createObjectBuilder().add("configured", jms.configured()).add("listening", jms.awaitListening(java.time.Duration.ofSeconds(30))).build().toString();
     }
 
     @GET
