@@ -508,14 +508,18 @@ public class TaskService {
                     worker.cancelled = true;
                     worker.wake();
                 } else {
-                    worker.cancelled = true;
-                    worker.wake();
-                    finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server stopped before the task finished"))));
+                    // failed first, then wake the worker: a worker that wakes earlier ends the task as cancelled and wins the race
+                    try {
+                        finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(ErrorCodes.INTERNAL_ERROR, "The server stopped before the task finished"))));
+                    } finally {
+                        worker.cancelled = true;
+                        worker.wake();
+                    }
                 }
             } catch (RuntimeException e) {
                 worker.cancelled = true;
                 worker.wake();
-                LOG.log(Level.FINE, "Could not close task " + abbreviate(worker.id), e);
+                LOG.log(Level.WARNING, "Could not close task " + abbreviate(worker.id) + "; its lease has to run out before another instance takes it over", e);
             }
         }
         if (ownedExecutor != null) {
