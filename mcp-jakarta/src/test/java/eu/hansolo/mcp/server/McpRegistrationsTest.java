@@ -2,12 +2,21 @@ package eu.hansolo.mcp.server;
 
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
+import eu.hansolo.mcp.api.Apps;
 import eu.hansolo.mcp.api.Caller;
+import eu.hansolo.mcp.api.CompletionCall;
+import eu.hansolo.mcp.api.CompletionResult;
+import eu.hansolo.mcp.api.McpCompletionHandler;
 import eu.hansolo.mcp.api.McpPromptHandler;
+import eu.hansolo.mcp.api.McpResourceHandler;
+import eu.hansolo.mcp.api.McpResourceTemplateHandler;
 import eu.hansolo.mcp.api.McpToolHandler;
+import eu.hansolo.mcp.api.PromptArgument;
 import eu.hansolo.mcp.api.PromptCall;
 import eu.hansolo.mcp.api.PromptMessage;
 import eu.hansolo.mcp.api.PromptResult;
+import eu.hansolo.mcp.api.ResourceCall;
+import eu.hansolo.mcp.api.ResourceResult;
 import eu.hansolo.mcp.api.ToolCall;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.auth.AuthConfig;
@@ -28,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Tools and prompts that come and go while the server runs. */
+/** Tools, prompts, resources, templates and completions that come and go while the server runs. */
 class McpRegistrationsTest {
 
     private static final String VERSION = "2026-07-28";
@@ -161,6 +170,160 @@ class McpRegistrationsTest {
         assertTrue(registry.all().stream().allMatch(tool -> tool.name().startsWith("t") || tool.name().equals("first")));
     }
 
+    @Test
+    void resourcesSwitchTheCapabilityOnWithTheFirstOne() {
+        assertFalse(capabilities().containsKey("resources"));
+        assertEquals(404, send("resources/list", "r0", Json.createObjectBuilder().build(), null).status());
+        registrations.addResource(new Res("mem://one", "first"));
+        assertTrue(capabilities().containsKey("resources"));
+        JsonObject listed = json(send("resources/list", "r1", Json.createObjectBuilder().build(), null).body()).getJsonObject("result");
+        assertEquals("mem://one", listed.getJsonArray("resources").getJsonObject(0).getString("uri"));
+        assertEquals("first", readText("mem://one"));
+        assertTrue(registrations.removeResource("mem://one"));
+        assertTrue(capabilities().containsKey("resources"), "stays on once a resource was registered, so listening clients keep working");
+        assertEquals(0, json(send("resources/list", "r2", Json.createObjectBuilder().build(), null).body()).getJsonObject("result").getJsonArray("resources").size());
+        assertEquals(-32602, json(send("resources/read", "r3", Json.createObjectBuilder().add("uri", "mem://one").build(), "mem://one").body()).getJsonObject("error").getInt("code"));
+        assertFalse(registrations.removeResource("mem://one"));
+    }
+
+    @Test
+    void aResourceCanBeReplacedButNotAddedTwiceOrWithABadUri() {
+        registrations.addResource(new Res("mem://one", "first"));
+        assertThrows(IllegalStateException.class, () -> registrations.addResource(new Res("mem://one", "again")));
+        assertThrows(IllegalStateException.class, () -> registrations.addResource(new Res("no-scheme", "x")));
+        registrations.replaceResource(new Res("mem://one", "changed"));
+        assertEquals("changed", readText("mem://one"));
+    }
+
+    @Test
+    void aResourceThatNeedsScopesIsRefusedWhileAuthenticationIsOff() {
+        Res scoped = new Res("mem://scoped", "x") {
+            @Override
+            public Set<String> requiredScopes() {
+                return Set.of("files");
+            }
+        };
+        assertTrue(assertThrows(IllegalStateException.class, () -> registrations.addResource(scoped)).getMessage().contains("mcp.auth.enabled"));
+        assertFalse(capabilities().containsKey("resources"));
+    }
+
+    @Test
+    void aTemplateServesItsUrisAndGoesAway() {
+        registrations.addResourceTemplate(new Templ("mem://item/{id}"));
+        JsonObject listed = json(send("resources/templates/list", "t1", Json.createObjectBuilder().build(), null).body()).getJsonObject("result");
+        assertEquals("mem://item/{id}", listed.getJsonArray("resourceTemplates").getJsonObject(0).getString("uriTemplate"));
+        assertEquals("item 42", readText("mem://item/42"));
+        assertThrows(IllegalStateException.class, () -> registrations.addResourceTemplate(new Templ("mem://item/{id}")));
+        assertThrows(IllegalStateException.class, () -> registrations.addResourceTemplate(new Templ("mem://item/{id")));
+        assertTrue(registrations.removeResourceTemplate("mem://item/{id}"));
+        assertFalse(registrations.removeResourceTemplate("mem://item/{id}"));
+        assertEquals(-32602, json(send("resources/read", "t2", Json.createObjectBuilder().add("uri", "mem://item/42").build(), "mem://item/42").body()).getJsonObject("error").getInt("code"));
+    }
+
+    @Test
+    void aCompletionSwitchesTheCapabilityOnAndAnswers() {
+        registrations.addPrompt(new Prompt("greet") {
+            @Override
+            public List<PromptArgument> arguments() {
+                return List.of(new PromptArgument("language", null, null, false));
+            }
+        });
+        assertFalse(capabilities().containsKey("completions"));
+        assertEquals(404, complete("greet", "language", "d").status());
+        registrations.addCompletion(new Completer(McpCompletionHandler.Kind.PROMPT, "greet", "language", "de", "dk", "en"));
+        assertTrue(capabilities().containsKey("completions"));
+        assertEquals(List.of("de", "dk"), completionValues(complete("greet", "language", "d")));
+        registrations.replaceCompletion(new Completer(McpCompletionHandler.Kind.PROMPT, "greet", "language", "fr"));
+        assertEquals(List.of("fr"), completionValues(complete("greet", "language", "")));
+        assertTrue(registrations.removeCompletion(McpCompletionHandler.Kind.PROMPT, "greet", "language"));
+        assertFalse(registrations.removeCompletion(McpCompletionHandler.Kind.PROMPT, "greet", "language"));
+        assertEquals(List.of(), completionValues(complete("greet", "language", "")));
+    }
+
+    @Test
+    void aCompletionNeedsAnExistingTargetAndArgumentAndIsUnique() {
+        registrations.addResourceTemplate(new Templ("mem://item/{id}"));
+        assertTrue(assertThrows(IllegalStateException.class, () -> registrations.addCompletion(new Completer(McpCompletionHandler.Kind.PROMPT, "nope", "x", "a"))).getMessage().contains("no such prompt"));
+        assertTrue(assertThrows(IllegalStateException.class, () -> registrations.addCompletion(new Completer(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, "mem://item/{id}", "other", "a"))).getMessage().contains("unknown argument"));
+        registrations.addCompletion(new Completer(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, "mem://item/{id}", "id", "1", "2"));
+        assertThrows(IllegalStateException.class, () -> registrations.addCompletion(new Completer(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, "mem://item/{id}", "id", "3")));
+    }
+
+    @Test
+    void removingATemplateOrPromptDropsItsCompletions() {
+        registrations.addResourceTemplate(new Templ("mem://item/{id}"));
+        registrations.addCompletion(new Completer(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, "mem://item/{id}", "id", "1"));
+        registrations.removeResourceTemplate("mem://item/{id}");
+        registrations.addResourceTemplate(new Templ("mem://item/{id}"));
+        assertTrue(registry.findCompletion(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, "mem://item/{id}", "id").isEmpty(), "a new template of the same name must not inherit it");
+        registrations.addPrompt(new Prompt("greet") {
+            @Override
+            public List<PromptArgument> arguments() {
+                return List.of(new PromptArgument("language", null, null, false));
+            }
+        });
+        registrations.addCompletion(new Completer(McpCompletionHandler.Kind.PROMPT, "greet", "language", "de"));
+        registrations.removePrompt("greet");
+        assertTrue(registry.findCompletion(McpCompletionHandler.Kind.PROMPT, "greet", "language").isEmpty());
+    }
+
+    @Test
+    void aResourceThatAToolPointsAtCannotBeRemoved() {
+        registrations.addResource(new Res("ui://page", "<html></html>"));
+        registrations.addTool(new Tool("show", "x") {
+            @Override
+            public JsonObject meta() {
+                return Apps.toolMeta("ui://page");
+            }
+        });
+        assertTrue(assertThrows(IllegalStateException.class, () -> registrations.removeResource("ui://page")).getMessage().contains("show"));
+        assertEquals("<html></html>", readText("ui://page"));
+        assertTrue(registrations.removeTool("show"));
+        assertTrue(registrations.removeResource("ui://page"));
+    }
+
+    @Test
+    void aToolCanOnlyPointAtAResourceThatWasAddedBefore() {
+        Tool bound = new Tool("show", "x") {
+            @Override
+            public JsonObject meta() {
+                return Apps.toolMeta("ui://late");
+            }
+        };
+        assertThrows(IllegalStateException.class, () -> registrations.addTool(bound));
+        registrations.addResource(new Res("ui://late", "<html></html>"));
+        registrations.addTool(bound);
+        assertEquals(List.of("first", "show"), toolNames());
+    }
+
+    @Test
+    void aTemplateThatServesTheUiResourceOfAToolCannotBeRemovedEither() {
+        registrations.addResourceTemplate(new Templ("ui://{page}"));
+        registrations.addTool(new Tool("show", "x") {
+            @Override
+            public JsonObject meta() {
+                return Apps.toolMeta("ui://home");
+            }
+        });
+        assertThrows(IllegalStateException.class, () -> registrations.removeResourceTemplate("ui://{page}"));
+        registrations.addResource(new Res("ui://home", "<html></html>"));
+        assertTrue(registrations.removeResourceTemplate("ui://{page}"), "a fixed resource still serves it");
+    }
+
+    @Test
+    void resourceChangesAreToldToSubscribersAndNoOpsAreNot() throws IOException {
+        registrations.addResource(new Res("mem://one", "first"));
+        McpHttpResponse stream = send("subscriptions/listen", "10", Json.createObjectBuilder().add("notifications", Json.createObjectBuilder().add("resourcesListChanged", true)).build(), null);
+        registrations.removeResource("mem://nope");
+        registrations.removeResourceTemplate("nope");
+        registrations.addResourceTemplate(new Templ("mem://item/{id}"));
+        registrations.addCompletion(new Completer(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, "mem://item/{id}", "id", "1"));   // no list, nothing sent
+        notifications.close();
+        List<String> methods = new ArrayList<>();
+        stream.stream().writeTo(text -> methods.add(json(text).getString("method", "response")));
+        assertEquals(1, methods.stream().filter("notifications/resources/list_changed"::equals).count(), methods.toString());
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------------------
 
     private List<String> toolNames() {
@@ -197,6 +360,116 @@ class McpRegistrationsTest {
         return Json.createReader(new StringReader(text)).readObject();
     }
 
+    private String readText(String uri) {
+        return json(send("resources/read", "rd", Json.createObjectBuilder().add("uri", uri).build(), uri).body()).getJsonObject("result").getJsonArray("contents").getJsonObject(0).getString("text");
+    }
+
+    private McpHttpResponse complete(String prompt, String argument, String typed) {
+        return send("completion/complete", "cc", Json.createObjectBuilder()
+                .add("ref", Json.createObjectBuilder().add("type", "ref/prompt").add("name", prompt))
+                .add("argument", Json.createObjectBuilder().add("name", argument).add("value", typed)).build(), null);
+    }
+
+    private static List<String> completionValues(McpHttpResponse response) {
+        return json(response.body()).getJsonObject("result").getJsonObject("completion").getJsonArray("values").getValuesAs(jakarta.json.JsonString.class).stream().map(jakarta.json.JsonString::getString).toList();
+    }
+
+    private static class Res implements McpResourceHandler {
+
+        private final String uri;
+        private final String text;
+
+
+        Res(String uri, String text) {
+            this.uri  = uri;
+            this.text = text;
+        }
+
+
+        @Override
+        public String uri() {
+            return uri;
+        }
+
+        @Override
+        public String name() {
+            return uri;
+        }
+
+        @Override
+        public String mimeType() {
+            return "text/plain";
+        }
+
+        @Override
+        public ResourceResult read(ResourceCall call) {
+            return ResourceResult.text(uri, "text/plain", text);
+        }
+    }
+
+    private static final class Templ implements McpResourceTemplateHandler {
+
+        private final String template;
+
+
+        Templ(String template) {
+            this.template = template;
+        }
+
+
+        @Override
+        public String uriTemplate() {
+            return template;
+        }
+
+        @Override
+        public String name() {
+            return "template";
+        }
+
+        @Override
+        public ResourceResult read(ResourceCall call) {
+            return ResourceResult.text(call.uri(), "text/plain", "item " + call.variables().values().iterator().next());
+        }
+    }
+
+    private static final class Completer implements McpCompletionHandler {
+
+        private final Kind         kind;
+        private final String       target;
+        private final String       argument;
+        private final List<String> candidates;
+
+
+        Completer(Kind kind, String target, String argument, String... candidates) {
+            this.kind       = kind;
+            this.target     = target;
+            this.argument   = argument;
+            this.candidates = List.of(candidates);
+        }
+
+
+        @Override
+        public Kind kind() {
+            return kind;
+        }
+
+        @Override
+        public String target() {
+            return target;
+        }
+
+        @Override
+        public String argument() {
+            return argument;
+        }
+
+        @Override
+        public CompletionResult complete(CompletionCall call) {
+            return CompletionResult.matching(candidates, call.value());
+        }
+    }
+
     private static class Tool implements McpToolHandler {
 
         private final String name;
@@ -230,7 +503,7 @@ class McpRegistrationsTest {
         }
     }
 
-    private static final class Prompt implements McpPromptHandler {
+    private static class Prompt implements McpPromptHandler {
 
         private final String name;
 

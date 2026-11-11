@@ -713,7 +713,7 @@ Status: unit-tested (`McpAppsTest`, 10 tests). `ExtensionsIT` passes on all thre
 
 ## Dynamic registration
 
-Tools and prompts found at startup stay in the registry, but an application can also add, replace and remove them while it runs. Inject `McpRegistrations`:
+Everything found at startup stays in the registry, but an application can also add, replace and remove tools, prompts, resources, resource templates and completions while it runs. Inject `McpRegistrations`:
 
 ```java
 @Inject McpRegistrations registrations;
@@ -722,11 +722,16 @@ registrations.addTool(new ReportTool(report));          // McpToolHandler; throw
 registrations.replaceTool(new ReportTool(report2));     // add, or replace the tool of the same name
 registrations.removeTool("report-" + report.id());      // false if there was no such tool
 registrations.addPrompt(...); registrations.replacePrompt(...); registrations.removePrompt(...);
+registrations.addResource(...); registrations.replaceResource(...); registrations.removeResource(uri);
+registrations.addResourceTemplate(...); registrations.replaceResourceTemplate(...); registrations.removeResourceTemplate(uriTemplate);
+registrations.addCompletion(...); registrations.replaceCompletion(...); registrations.removeCompletion(kind, target, argument);
 ```
 
-Every real change sends `notifications/tools/list_changed` (or `prompts/...`) to all clients that hold a `subscriptions/listen` stream, so they list again; a removal of something that does not exist sends nothing. Handlers are checked as at startup, and one that declares required scopes is refused while `mcp.auth.enabled` is false. A call that is already running when its tool is removed finishes normally. Prompts: if the server started without any, the `prompts` capability is switched on by the first one you add and stays on afterwards.
+Every real change sends `notifications/tools/list_changed` (`prompts/...`, `resources/...` for resources and templates) to all clients that hold a `subscriptions/listen` stream, so they list again; a removal of something that does not exist sends nothing. Handlers are checked as at startup, and one that declares required scopes is refused while `mcp.auth.enabled` is false. A call that is already running when its tool is removed finishes normally. If the server started without any prompts, resources or completions, the matching capability is switched on by the first one you add and stays on afterwards.
 
-This is per instance, like `McpNotifications`: with several instances, make the same call on each. Clients that do not listen see a change when their cached list expires (`mcp.cache-ttl-ms`). Resources, resource templates and completions are fixed at startup.
+Completions have no list, so adding or removing one tells nobody. A completion is checked like at startup: its prompt or template must exist and know the argument, and there is one per argument. Removing a prompt or template drops its completions. A resource that a tool points at with `_meta.ui.resourceUri` cannot be removed while that tool exists (and a tool can only point at a resource that is already registered), unless a template still serves the URI.
+
+This is per instance, like `McpNotifications`: with several instances, make the same call on each. Clients that do not listen see a change when their cached list expires (`mcp.cache-ttl-ms`).
 
 ## Pagination
 
@@ -747,7 +752,7 @@ The `docker run` line above sets `MCP_TASKS_ENABLED=true`, because the Tasks ext
 
 ## Not implemented yet
 
-SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; dynamic registration of resources and completions (tools and prompts can change at runtime, see Dynamic registration); skills with `"resources": "dynamic"`; remote `$ref` in argument validation (on purpose, see Argument validation); 2025-11-25 compatibility (on purpose: only 2026-07-28 is supported).
+SSE for anything but `tools/call` progress and `subscriptions/listen` (see Streaming, Notifications); a ready-made transport for the notification bridge (you write `McpNotificationBridge` on top of your own messaging, see "Several instances"); logging (`io.modelcontextprotocol/logLevel`, `notifications/message`), left out on purpose because 2026-07-28 deprecates it and says new implementations should not adopt it; skills with `"resources": "dynamic"`; remote `$ref` in argument validation (on purpose, see Argument validation); 2025-11-25 compatibility (on purpose: only 2026-07-28 is supported).
 
 ## Decisions worth a second look
 

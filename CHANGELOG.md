@@ -12,6 +12,11 @@
 - A `double` without a fractional part is written as `5`, not `5.0`, in structured results; a `float` is written with the digits it prints with (`0.1`, not `0.10000000149011612`).
 - The startup error for a task table without the columns of 0.8.0 names them and points to the `ALTER TABLE` statements.
 
+### Fixed
+- A server instance that stops while it runs tasks now ends those tasks as `failed` (non-restartable) or hands them over (restartable) reliably. Before, the task could be written as `cancelled` because the stopping worker raced with `close()`, and a heartbeat that was running during shutdown could extend the lease of a task that had just been handed over.
+- A hand-over that cannot be written (the store is unreachable while the server stops) leaves the task `working` so that its lease runs out and another instance takes it over; before, the worker wrote `cancelled`.
+- `JdbcTaskStore` with `mcp.tasks.jdbc.url` keeps up to four idle connections and reuses them. Servers that delete the application's libraries before they destroy its beans (Payara Micro) made drivers that read their own jar on every connect (MariaDB) fail in `TaskService.close()`.
+
 
 ## 0.8.0 (2026-11-11)
 

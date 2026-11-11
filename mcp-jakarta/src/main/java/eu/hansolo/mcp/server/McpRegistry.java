@@ -24,8 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.SortedMap;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.regex.Pattern;
@@ -40,13 +38,15 @@ public class McpRegistry {
 
     private static final Pattern VALID_NAME = Pattern.compile("[A-Za-z0-9_.-]{1,128}");
 
-    private final ConcurrentNavigableMap<String, McpToolHandler> tools;
-    private final SortedMap<String, McpResourceHandler> resources;
-    private final SortedMap<String, TemplateEntry>      templates;
-    private final ConcurrentNavigableMap<String, McpPromptHandler> prompts;
-    private volatile boolean                            promptsEnabled;
-    private final Map<String, McpCompletionHandler>     completions;
-    private final SkillSet                              skills;
+    private final ConcurrentNavigableMap<String, McpToolHandler>     tools;
+    private final ConcurrentNavigableMap<String, McpResourceHandler> resources;
+    private final ConcurrentNavigableMap<String, TemplateEntry>      templates;
+    private volatile boolean                                         resourcesEnabled;
+    private final ConcurrentNavigableMap<String, McpPromptHandler>   prompts;
+    private volatile boolean                                         promptsEnabled;
+    private final Map<String, McpCompletionHandler>                  completions;
+    private volatile boolean                                         completionsEnabled;
+    private final SkillSet                                           skills;
 
 
     @Inject
@@ -112,8 +112,9 @@ public class McpRegistry {
         return templates.values().stream().map(TemplateEntry::handler).toList();
     }
 
+    /** True if resources are offered: some exist now, or the application has registered one at runtime (and may have removed it again). */
     public boolean hasResources() {
-        return !resources.isEmpty() || !templates.isEmpty() || !skills.isEmpty();
+        return resourcesEnabled || !resources.isEmpty() || !templates.isEmpty() || !skills.isEmpty();
     }
 
     /** The resource for this URI: an exact fixed resource first, otherwise the first template (in template order) that matches. */
@@ -168,8 +169,9 @@ public class McpRegistry {
 
     // ---- completions -----------------------------------------------------------------------------------------------
 
+    /** True if completions are offered: some exist now, or the application has registered one at runtime (and may have removed it again). */
     public boolean hasCompletions() {
-        return !completions.isEmpty();
+        return completionsEnabled || !completions.isEmpty();
     }
 
     /** What a completion request may refer to: the argument names that exist for a prompt or template, and the scopes guarding it. */
@@ -191,21 +193,29 @@ public class McpRegistry {
     }
 
     private Map<String, McpCompletionHandler> collectCompletions(Iterable<? extends McpCompletionHandler> source) {
-        Map<String, McpCompletionHandler> result = new java.util.LinkedHashMap<>();
+        Map<String, McpCompletionHandler> result = new java.util.concurrent.ConcurrentHashMap<>();
         for (McpCompletionHandler handler : source) {
-            String what = handler.kind() + " " + handler.target() + " argument " + handler.argument();
-            Optional<CompletionTarget> target = completionTarget(handler.kind(), handler.target());
-            if (target.isEmpty()) {
-                throw new IllegalStateException("Completion for " + what + ": no such " + (handler.kind() == McpCompletionHandler.Kind.PROMPT ? "prompt" : "resource template"));
-            }
-            if (!target.get().arguments().contains(handler.argument())) {
-                throw new IllegalStateException("Completion for " + what + ": unknown argument, expected one of " + target.get().arguments());
-            }
-            if (result.put(completionKey(handler.kind(), handler.target(), handler.argument()), handler) != null) {
-                throw new IllegalStateException("Duplicate completion handler for " + what);
+            validateCompletion(handler);
+            if (result.putIfAbsent(completionKey(handler.kind(), handler.target(), handler.argument()), handler) != null) {
+                throw new IllegalStateException("Duplicate completion handler for " + describe(handler));
             }
         }
         return result;
+    }
+
+    private static String describe(McpCompletionHandler handler) {
+        return handler.kind() + " " + handler.target() + " argument " + handler.argument();
+    }
+
+    /** The target must exist and know the argument, as at startup. */
+    private void validateCompletion(McpCompletionHandler handler) {
+        Optional<CompletionTarget> target = completionTarget(handler.kind(), handler.target());
+        if (target.isEmpty()) {
+            throw new IllegalStateException("Completion for " + describe(handler) + ": no such " + (handler.kind() == McpCompletionHandler.Kind.PROMPT ? "prompt" : "resource template"));
+        }
+        if (!target.get().arguments().contains(handler.argument())) {
+            throw new IllegalStateException("Completion for " + describe(handler) + ": unknown argument, expected one of " + target.get().arguments());
+        }
     }
 
     // ---- scopes ----------------------------------------------------------------------------------------------------
@@ -249,7 +259,92 @@ public class McpRegistry {
     }
 
     boolean removePrompt(String name) {
-        return name != null && prompts.remove(name) != null;
+        boolean removed = name != null && prompts.remove(name) != null;
+        if (removed) {
+            dropCompletions(McpCompletionHandler.Kind.PROMPT, name);
+        }
+        return removed;
+    }
+
+    void addResource(McpResourceHandler resource, boolean replace) {
+        validateResource(resource);
+        resourcesEnabled = true;
+        if (replace) {
+            resources.put(resource.uri(), resource);
+        } else if (resources.putIfAbsent(resource.uri(), resource) != null) {
+            throw new IllegalStateException("Duplicate MCP resource URI '" + resource.uri() + "'");
+        }
+    }
+
+    /**
+     * @throws IllegalStateException if a tool points at this resource and no template would still serve it (the Apps specification says the referenced resource must exist)
+     */
+    boolean removeResource(String uri) {
+        if (uri == null || !resources.containsKey(uri)) {
+            return false;
+        }
+        checkNotBound(uri, null);
+        return resources.remove(uri) != null;
+    }
+
+    /** A ui:// resource that a tool points at must stay reachable: by a fixed resource, or by a template other than {@code leaving}. */
+    private void checkNotBound(String uri, TemplateEntry leaving) {
+        boolean servedByTemplate = templates.values().stream().anyMatch(entry -> entry != leaving && entry.template().match(uri).isPresent());
+        if (servedByTemplate || leaving != null && resources.containsKey(uri)) {
+            return;
+        }
+        for (McpToolHandler tool : tools.values()) {
+            if (Apps.boundResource(tool.meta()).filter(uri::equals).isPresent()) {
+                throw new IllegalStateException("Resource '" + uri + "' cannot be removed: tool '" + tool.name() + "' points at it and nothing else serves it");
+            }
+        }
+    }
+
+    void addTemplate(McpResourceTemplateHandler handler, boolean replace) {
+        TemplateEntry entry = compileTemplate(handler);
+        resourcesEnabled = true;
+        if (replace) {
+            templates.put(handler.uriTemplate(), entry);
+        } else if (templates.putIfAbsent(handler.uriTemplate(), entry) != null) {
+            throw new IllegalStateException("Duplicate MCP resource template '" + handler.uriTemplate() + "'");
+        }
+    }
+
+    /**
+     * @throws IllegalStateException if a tool points at a ui:// resource that only this template serves
+     */
+    boolean removeTemplate(String uriTemplate) {
+        TemplateEntry leaving = uriTemplate == null ? null : templates.get(uriTemplate);
+        if (leaving != null) {
+            for (McpToolHandler tool : tools.values()) {
+                Apps.boundResource(tool.meta()).filter(uri -> leaving.template().match(uri).isPresent()).ifPresent(uri -> checkNotBound(uri, leaving));
+            }
+        }
+        boolean removed = uriTemplate != null && templates.remove(uriTemplate) != null;
+        if (removed) {
+            dropCompletions(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, uriTemplate);
+        }
+        return removed;
+    }
+
+    /** Completions of a prompt or template that is gone would never be asked for, and would come back to life if the name is used again. */
+    private void dropCompletions(McpCompletionHandler.Kind kind, String target) {
+        completions.values().removeIf(handler -> handler.kind() == kind && handler.target().equals(target));
+    }
+
+    void addCompletion(McpCompletionHandler handler, boolean replace) {
+        validateCompletion(handler);
+        completionsEnabled = true;
+        String key = completionKey(handler.kind(), handler.target(), handler.argument());
+        if (replace) {
+            completions.put(key, handler);
+        } else if (completions.putIfAbsent(key, handler) != null) {
+            throw new IllegalStateException("Duplicate completion handler for " + describe(handler));
+        }
+    }
+
+    boolean removeCompletion(McpCompletionHandler.Kind kind, String target, String argument) {
+        return kind != null && target != null && argument != null && completions.remove(completionKey(kind, target, argument)) != null;
     }
 
     // ---- validation ------------------------------------------------------------------------------------------------
@@ -295,43 +390,52 @@ public class McpRegistry {
         checkDescriptors("prompt '" + prompt.name() + "'", prompt.icons(), prompt.meta());
     }
 
-    private static SortedMap<String, McpResourceHandler> collectResources(Iterable<? extends McpResourceHandler> source) {
-        SortedMap<String, McpResourceHandler> result = new TreeMap<>();
+    private static ConcurrentNavigableMap<String, McpResourceHandler> collectResources(Iterable<? extends McpResourceHandler> source) {
+        ConcurrentNavigableMap<String, McpResourceHandler> result = new ConcurrentSkipListMap<>();
         for (McpResourceHandler resource : source) {
-            String uri = resource.uri();
-            if (uri == null || !isAbsoluteUri(uri)) {
-                throw new IllegalStateException("Invalid MCP resource URI '" + uri + "' on " + resource.getClass().getName() + ": an absolute URI with a scheme is required");
-            }
-            if (resource.name() == null || resource.name().isBlank()) {
-                throw new IllegalStateException("MCP resource '" + uri + "' has no name");
-            }
-            checkDescriptors("resource '" + uri + "'", resource.icons(), resource.meta());
-            if (result.putIfAbsent(uri, resource) != null) {
-                throw new IllegalStateException("Duplicate MCP resource URI '" + uri + "'");
+            validateResource(resource);
+            if (result.putIfAbsent(resource.uri(), resource) != null) {
+                throw new IllegalStateException("Duplicate MCP resource URI '" + resource.uri() + "'");
             }
         }
         return result;
     }
 
-    private static SortedMap<String, TemplateEntry> collectTemplates(Iterable<? extends McpResourceTemplateHandler> source) {
-        SortedMap<String, TemplateEntry> result = new TreeMap<>();
+    private static void validateResource(McpResourceHandler resource) {
+        String uri = resource.uri();
+        if (uri == null || !isAbsoluteUri(uri)) {
+            throw new IllegalStateException("Invalid MCP resource URI '" + uri + "' on " + resource.getClass().getName() + ": an absolute URI with a scheme is required");
+        }
+        if (resource.name() == null || resource.name().isBlank()) {
+            throw new IllegalStateException("MCP resource '" + uri + "' has no name");
+        }
+        checkDescriptors("resource '" + uri + "'", resource.icons(), resource.meta());
+    }
+
+    private static ConcurrentNavigableMap<String, TemplateEntry> collectTemplates(Iterable<? extends McpResourceTemplateHandler> source) {
+        ConcurrentNavigableMap<String, TemplateEntry> result = new ConcurrentSkipListMap<>();
         for (McpResourceTemplateHandler handler : source) {
-            String text = handler.uriTemplate();
-            UriTemplate template;
-            try {
-                template = UriTemplate.compile(text == null ? "" : text);
-            } catch (IllegalArgumentException e) {
-                throw new IllegalStateException("Invalid MCP resource template on " + handler.getClass().getName() + ": " + e.getMessage(), e);
-            }
-            if (handler.name() == null || handler.name().isBlank()) {
-                throw new IllegalStateException("MCP resource template '" + text + "' has no name");
-            }
-            checkDescriptors("resource template '" + text + "'", handler.icons(), handler.meta());
-            if (result.putIfAbsent(text, new TemplateEntry(template, handler)) != null) {
-                throw new IllegalStateException("Duplicate MCP resource template '" + text + "'");
+            TemplateEntry entry = compileTemplate(handler);
+            if (result.putIfAbsent(handler.uriTemplate(), entry) != null) {
+                throw new IllegalStateException("Duplicate MCP resource template '" + handler.uriTemplate() + "'");
             }
         }
         return result;
+    }
+
+    private static TemplateEntry compileTemplate(McpResourceTemplateHandler handler) {
+        String text = handler.uriTemplate();
+        UriTemplate template;
+        try {
+            template = UriTemplate.compile(text == null ? "" : text);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("Invalid MCP resource template on " + handler.getClass().getName() + ": " + e.getMessage(), e);
+        }
+        if (handler.name() == null || handler.name().isBlank()) {
+            throw new IllegalStateException("MCP resource template '" + text + "' has no name");
+        }
+        checkDescriptors("resource template '" + text + "'", handler.icons(), handler.meta());
+        return new TemplateEntry(template, handler);
     }
 
     /** A tool that names a ui:// page must have it: the Apps specification says the referenced resource must exist. */
