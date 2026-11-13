@@ -854,6 +854,7 @@ These are left out on purpose and are not planned for any release, so do not wai
 - **SSE and progress for anything but `tools/call` and `subscriptions/listen`:** `resources/read` and `prompts/get` always answer with one JSON response. Do long-running work in a tool, or in a task.
 - **Remote `$ref` in argument validation:** following a URL taken from a schema is a server-side request forgery risk. Local references (`#/$defs/...`) work, see Argument validation.
 - **2025-11-25 compatibility:** only 2026-07-28 is supported.
+- **Rate limiting:** the specification recommends it, and this library does not do it. The server keeps no state between requests on purpose, so a counter in the process would allow N times the limit on N instances, and a shared counter needs a store this library does not want to own. A gateway or a JAX-RS `ContainerRequestFilter` in front of `McpResource` also sees the requests that never reach a tool (garbage tokens, floods of `tools/list`), which a check inside a tool cannot. An agent stuck in a loop is stopped there, not in the library.
 
 ## Decisions worth a second look
 

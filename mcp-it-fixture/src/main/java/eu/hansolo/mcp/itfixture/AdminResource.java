@@ -28,6 +28,7 @@ public class AdminResource {
     @Inject McpNotifications notifications;
     @Inject JmsTestBridge jms;
     @Inject McpExternalJobs externalJobs;
+    @Inject CallLog calls;
 
 
     /** Adds a tool with this name that answers "hello from <name>". 409 if the name is taken. */
@@ -84,6 +85,23 @@ public class AdminResource {
     }
 
     /** Waits (up to 30 s) until the JMS bridge holds its subscription; {@code configured} is false when MCP_IT_JMS_URL is unset. */
+    /** What the interceptor and the audited tools recorded, oldest first. */
+    @GET
+    @Path("/calls")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String calls() {
+        jakarta.json.JsonArrayBuilder array = Json.createArrayBuilder();
+        calls.all().forEach(array::add);
+        return array.build().toString();
+    }
+
+    @DELETE
+    @Path("/calls")
+    public Response clearCalls() {
+        calls.clear();
+        return Response.noContent().build();
+    }
+
     @GET
     @Path("/jms/ready")
     @Produces(MediaType.APPLICATION_JSON)
