@@ -47,59 +47,22 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 
 The code uses only Jakarta EE 11 Web Profile APIs and has now run on three servers (Payara, WildFly, Open Liberty). Open Liberty also ships its own MCP support (`mcp-1.0`); use this library when you need portability across servers or the 2026-07-28 stateless protocol. The image tags above are defaults chosen from the vendors' naming schemes; if one does not exist, override it with `-Dmcp.image=...`. If you run these and something breaks, the failing assertion plus the container log (printed on startup failure) is the useful bug report. CI (`.github/workflows/ci.yml`) runs all three; All three are required to pass.
 
-## 1. "Adding the library to your own application", step 1 (replace the paragraph after the dependency block)
+## Adding the library to your own application
 
-Replace the version in the example with the current release, and replace "`0.7.0` is the current release ..." with a line that matches
-the real state when you release (I left the number out on purpose: your README and poms disagree on it today, see my chat note).
-Add after the dependency block:
+1. Add the dependency. It goes into the WAR; the Jakarta EE API stays `provided` as usual.
 
-> Compile your application with `-parameters` (`<parameters>true</parameters>` in the `maven-compiler-plugin` configuration). Tool methods
-> are described by their parameter names; without the flag the deployment fails, and a failed deployment makes every URL of the application
-> answer 404 until you read the server log. The parent POM of this project sets the flag, but an application with its own parent must set it itself.
-> `@McpParam(name = ...)` names a parameter explicitly if you cannot.
-
-## 2. Same list, step 2 (replace)
-
-> 2. Register the endpoint classes in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication,
-     >    `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. **If your `Application` overrides `getClasses()`, the server
-     >    stops scanning for resources: list your own REST resources there too, or they disappear.** OAuth metadata discovery (RFC 9728) needs the
-     >    application at the host root.
-
-## 3. "Writing tools", first line (replace "Compile with `-parameters` (the parent POM does) or name ...")
-
-> Put `@McpTool` on public methods of any CDI bean. Compile with `-parameters` (see "Adding the library") or name parameters with `@McpParam(name = ...)`.
-> A tool that cannot be built (for example a missing parameter name) fails the whole deployment at startup, by design: the message names the class and the method.
-
-Also add to the table of parameter types (line "Parameters"), as a note below it:
-
-> Not converted: `java.time` types (`LocalDate`, `Instant` ...). Take a `String` and parse it in the tool, with `@McpParam(description = "ISO date, 2026-11-24")`.
-> A tool method cannot return a bare `List`; return a record that holds it (`record Visits(List<Visit> visits)`), because the result is a JSON object.
-
-(Check the second sentence against your code before you paste it: I did not re-read the tool return types, so it comes from your notes only.)
-
-## 4. Section "Adding the library", curl example: add a second example right after the first
-
-```bash
-curl -s http://localhost:8080/mcp \
-  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/list' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+```xml
+<dependency>
+    <groupId>eu.hansolo.mcp</groupId>
+    <artifactId>mcp-jakarta</artifactId>
+    <version>0.9.0</version>
+</dependency>
 ```
 
-and one sentence: "Every request needs the `Mcp-Method` header and the `_meta` fields; `Mcp-Name` is only sent for calls that name something (`tools/call`, `prompts/get`, `resources/read`)."
-
-## 5. Section "Elicitation": add two bullets after the "Form mode" bullet
-
-> - **A plain confirmation** is a form without properties: `Elicitation.form("Close ticket 3?")`. The user sees the message and can accept or decline; `answer.accepted()` tells which. Bind the question to the call with a signed `requestState` (`McpRequestStates`), so that the answer cannot be replayed with other arguments: see `close_ticket` in the tickets example.
-> - **Keep data out of the message.** The check for sensitive words applies to the message too, so `Elicitation.form("Close " + title + "?")` throws when a ticket is called "Password reset". Put an id or a short fixed text in the message, and let the model show the details in its own reply.
-
-## 6. Tickets example, the `close_ticket` bullet (replace)
-
-> - `close_ticket`: the confirmation flow. The first call returns "input required" with a signed state that names the ticket and the resolution; the client asks the user and repeats the call with the answer and the state. The server keeps nothing in between. A retry with other arguments than the user confirmed asks again, an answer without a valid state is refused, and a client that cannot ask the user gets an error, never a silent close.
-
-## 7. Elicitation status line
-
-`ElicitationTest` has one more test now (13 tests); change "12 tests" accordingly.
+2. Compile with `-parameters` (`<parameters>true</parameters>` in the `maven-compiler-plugin` configuration). Tool methods are described by their parameter names; without the flag the deployment fails, and a failed deployment makes every URL of the application answer 404 until you read the server log. The parent POM of this project sets the flag, but an application with its own parent must set it itself. `@McpParam(name = ...)` names a parameter explicitly if you cannot.
+3. Register the endpoint in your JAX-RS `Application` (see `ExampleApplication`): `McpResource` and, if you use authentication, `ProtectedResourceMetadataResource`. The endpoint is `<context root>/mcp`. **If your `Application` overrides `getClasses()`, the server stops scanning for resources: list your own REST resources there too, or they disappear.** OAuth metadata discovery (RFC 9728) needs the application at the host root.
+4. Write tools, resources and prompts as annotated CDI beans (see "Writing tools"). A tool that cannot be built, for example one with a missing parameter name or an unsupported type, fails the whole deployment at startup, by design: the message names the class and the method.
+5. Try it with MCP Inspector (`--protocol-era modern`) or curl (see "Build and run").
 
 ## Build and run
 
@@ -139,6 +102,17 @@ curl -s http://localhost:8080/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hi"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
+`tools/list` needs the same headers, but no `Mcp-Name`:
+
+```bash
+curl -s http://localhost:8080/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/list' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+```
+
+Every request needs the `Mcp-Method` header and the `_meta` fields; `Mcp-Name` is only sent for calls that name something (`tools/call`, `prompts/get`, `resources/read`).
+
 ## The tickets example
 
 `mcp-example` is a hello-world. `mcp-example-tickets` shows what a real service looks like: an IT help desk that an AI assistant can search, read, file tickets in and close, with the permissions enforced by your identity provider.
@@ -173,7 +147,7 @@ Then use `$TOKEN` as in the Keycloak section below (MCP Inspector or curl). Ask 
 
 - `TicketTools`, `TicketResources`, `TicketPrompts`, `TicketCompletions`: the whole MCP side, plain annotated classes with `@McpTool(scopes = ...)` and friends.
 - `TicketStore` / `JpaTicketStore`: the database side. The MCP classes only see the interface, which is why the unit tests run without a database.
-- `close_ticket`: the confirmation flow. The first call returns "input required"; the client asks the user and repeats the call with the answer. The server keeps nothing in between. A client that cannot ask the user gets an error, never a silent close.
+- `close_ticket`: the confirmation flow. The first call returns "input required" with a signed state that names the ticket and the resolution; the client asks the user and repeats the call with the answer and the state. The server keeps nothing in between. A retry with other arguments than the user confirmed asks again, an answer without a valid state is refused, and a client that cannot ask the user gets an error, never a silent close.
 
 **Simplifications to know about:** the database is embedded H2 and the persistence unit is resource-local, so the example runs on any server without configuring a datasource. A real application would use the server's JTA datasource. Ticket ids come from a sequence rather than `IDENTITY`, because EclipseLink's `IDENTITY` DDL is rejected by H2 2.x.
 
@@ -181,7 +155,7 @@ Then use `$TOKEN` as in the Keycloak section below (MCP Inspector or curl). Ask 
 
 ### Annotations (recommended)
 
-Put `@McpTool` on public methods of any CDI bean. Compile with `-parameters` (the parent POM does) or name parameters with `@McpParam(name = ...)`.
+Put `@McpTool` on public methods of any CDI bean. Compile with `-parameters` (see "Adding the library to your own application") or name parameters with `@McpParam(name = ...)`.
 
 ```java
 @ApplicationScoped
@@ -214,6 +188,8 @@ public class Calculator {
 | Arguments | Types, ranges and nested structure are checked during conversion; errors name the offending path (`Argument 'times' must be an integer`) |
 
 Rules: the method must be public and non-static (the call goes through the CDI proxy, so interceptors and scopes apply); one bean per class; use `Optional` for nullable record components in results (a `null` would violate the generated schema). Mistakes in declarations fail the deployment with the class and method name.
+
+Not supported: `java.time` types (`LocalDate`, `Instant`, ...) as parameters or record components; the tool is refused at startup ("unsupported type"). Take a `String` and parse it in the tool, and say the format in `@McpParam(description = "ISO date, 2026-11-24")`. A returned `List` or array becomes a text with the JSON array, not structured content; return a record that holds the list (`record Visits(List<Visit> visits)`) when the client should get an object and an `outputSchema`.
 
 ### Resources and prompts
 
@@ -597,6 +573,8 @@ public ToolResult call(ToolCall call) {
 ```
 
 - **Form mode** (`Elicitation.form`): a flat object of `string` (with `minLength`, `maxLength`, `format` of `email`, `uri`, `date`, `date-time`), `number`, `integer` (`minimum`, `maximum`), `bool`, `choice` (one of a list, optionally with display titles) and `multiChoice` (`minItems`, `maxItems`), each with `title`, `description`, `required` and a default. That is the subset the specification allows. Settings that do not fit a type throw when the form is built.
+- **A plain confirmation** is a form without properties: `Elicitation.form("Close ticket 3?")`. The user sees the message and can accept or decline; `answer.accepted()` tells which. Bind the question to the call with a signed `requestState` (`McpRequestStates`), so that the answer cannot be replayed with other arguments: see `close_ticket` in the tickets example.
+- **Keep data out of the message.** The check for sensitive words applies to the message too, so `Elicitation.form("Close " + title + "?")` throws when a ticket is called "Password reset". Put an id or a short fixed text in the message, and let the model show the details in its own reply.
 - **The user's answer is client input.** `form.problems(answer)` checks required properties, types, ranges, formats and allowed values and returns the problems; ask again (a new `ToolResult.ask`) instead of failing the call. `Elicitation.answer` returns empty for a missing or malformed answer, so the same code path covers the first attempt and a bad retry. `accepted()`, `declined()` and `cancelled()` are the three actions; anything else counts as cancelled.
 - **Sensitive data.** The specification forbids asking for passwords, API keys, tokens or payment data in form mode. `Elicitation.form` throws for property names, titles, descriptions and messages that look like that (`password`, `secret`, `api key`, `access token`, `credential`, `card number`, `cvv` ...). This is a heuristic, not a guarantee, and it has no switch to turn it off. Use URL mode for such data.
 - **URL mode** (`Elicitation.url(message, url)`): the user is sent to a page of yours and the data never reaches the client. The URL must be absolute `https` (or `http` for local development) and carry no user info. It must also hold no personal data and not be pre-authenticated, and your page must check that whoever opens it is the user the request was made for. The client's `accept` only means the user agreed to open the page; keep a signed `requestState` (`McpRequestStates`, see above) and check on the retry whether the work there is finished, or ask again.
@@ -605,7 +583,7 @@ public ToolResult call(ToolCall call) {
 
 Sampling and roots requests are not part of this API: the specification deprecates both, and the conformance fixtures still build them by hand with `ToolResult.inputRequired(JsonObject, String)`. See [docs/design/deprecated-features.md](docs/design/deprecated-features.md).
 
-Status: unit-tested (`ElicitationTest`, 12 tests). `ElicitationIT` (7 tests, fixture WAR: form, bad answer, decline, no capability, URL mode with a signed state, tampered state): in the run of 2026-11-09 09:45 six tests passed on Payara, WildFly and Open Liberty; the URL-mode test failed on all three because of a bug in the test itself (one JSON builder added under two keys, which Parsson empties), fixed since and not yet re-run. The conformance fixtures now build their elicitation requests and read their answers with this API (the conformance suite was run afterwards on Payara and all `input-required-result-*` scenarios passed). The form schema subset and the URL rules come from the 2026-07-28 elicitation page; the sensitive-word list is my own.
+Status: unit-tested (`ElicitationTest`, 13 tests). `ElicitationIT` (7 tests, fixture WAR: form, bad answer, decline, no capability, URL mode with a signed state, tampered state): in the run of 2026-11-09 09:45 six tests passed on Payara, WildFly and Open Liberty; the URL-mode test failed on all three because of a bug in the test itself (one JSON builder added under two keys, which Parsson empties), fixed since and not yet re-run. The conformance fixtures now build their elicitation requests and read their answers with this API (the conformance suite was run afterwards on Payara and all `input-required-result-*` scenarios passed). The form schema subset and the URL rules come from the 2026-07-28 elicitation page; the sensitive-word list is my own.
 
 ## Parameter headers (`x-mcp-header`)
 
@@ -813,15 +791,25 @@ This is per instance, like `McpNotifications`: with several instances, make the 
 
 ## Stable API and internals
 
-Everything an application is meant to use lives in `eu.hansolo.mcp.api` (annotations, `ToolResult`, `McpSkill` and the other interfaces),
-plus these classes of `eu.hansolo.mcp.server`: `McpRegistrations`, `McpNotifications`, `McpNotificationBridge`, `McpChange`,
-`McpExternalJobs`, `McpRequestStates` and `Settings`. Together with `eu.hansolo.mcp.protocol`, `eu.hansolo.mcp.auth`, `eu.hansolo.mcp.rest` and
-`eu.hansolo.mcp.tasks` (the store interface and its records) these are what 1.0.0 freezes.
+From 1.0.0 on, these are covered by semantic versioning: no incompatible change before 2.0.
 
-`McpRequestHandler`, `McpRegistry`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig` and `TaskConfig` are public only
-because other packages of the library need them. Their Javadoc says so; they can change in any release. The settings that `McpConfig` and
-`TaskConfig` read are stable, the classes are not. The scanners in `eu.hansolo.mcp.tools` are for the library's own startup and for tests
-that build a registry by hand.
+- `eu.hansolo.mcp.api`: annotations, `ToolResult`, `McpSkill` and the other interfaces and records an application uses.
+- `eu.hansolo.mcp.server`: `McpRegistrations`, `McpNotifications`, `McpNotificationBridge`, `McpChange`, `McpExternalJobs`, `McpRequestStates` and `Settings`.
+- `eu.hansolo.mcp.protocol`: the exception and the constants (the names, not the values: the specification decides those).
+- `eu.hansolo.mcp.auth`: the extension points `McpAuthenticator`, `TokenVerifier`, `KeyResolver` and `TokenException`, `ProtectedResourceMetadata`, and the settings `AuthConfig` reads.
+- `eu.hansolo.mcp.rest`: `McpResource` and `ProtectedResourceMetadataResource`, the classes an application registers.
+- `eu.hansolo.mcp.tasks`: `TaskStatus` and `InMemoryTaskStore`.
+- `eu.hansolo.mcp.tools`: the `hasX` and `scan` methods of `ToolScanner`, `ResourceScanner`, `PromptScanner` and `CompletionScanner`, and `BeanSource`. They exist for tests: `ToolScanner.scan(MyTools.class, BeanSource.of(new MyTools(store)))` returns the tool handlers of a bean without a container, as `TicketsTest` does.
+- The settings (`mcp.*`) and the HTTP behaviour of the endpoint.
+
+**Not covered:**
+
+- **Internal classes.** `McpRequestHandler`, `McpRegistry`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig`, `TaskConfig`, `McpHttpResponse`, `ListenExecutor`, `BearerJwtAuthenticator`, `JwtVerifier`, `JwksKeyResolver`, `IntrospectionVerifier`, the `Annotated*Handler` classes, `CdiAnnotationScanner`, `SchemaGenerator`, `JsonConverter`, `JsonMapper` and `ResultMapper` are public only because other packages of the library need them. Their Javadoc says so; they can change in any release. The constructors of `AuthConfig` with arguments are the same: an application configures authentication through settings.
+- **Provisional SPI.** `TaskStore` and `TaskRecord` are what a custom task store depends on. Methods can be added to the interface and components to the record in a minor release, announced in the changelog; a custom store is expected to follow.
+- **Sealed types.** `ToolResult`, `PromptResult`, `ResourceResult` and `ExternalJobStatus` are created and returned by applications, not switched over. A minor release can add a variant.
+- **Records.** When a component is added to a record in `api`, the old constructor stays as an overload, so code that creates one keeps compiling. Code that deconstructs a record with a pattern does not get that promise.
+
+**The protocol.** 1.x supports the specification 2026-07-28 and nothing else. A later specification version is added in a minor release if the API can carry it, and in 2.0 if it cannot. The extensions (Tasks, Apps) follow their own specifications: an incompatible change in an extension can ship in a minor release, with a changelog entry.
 
 ## Pagination
 

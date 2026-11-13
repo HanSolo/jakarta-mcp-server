@@ -39,6 +39,9 @@ import java.util.logging.Logger;
  * never stored), and never beyond the token's own {@code exp}. A token revoked at the server can therefore still be accepted for up to
  * that long. A refusal is cached for at most five seconds. If the endpoint cannot be reached, answers an error or sends something
  * unusable, the request fails with HTTP 503 instead of 401: the client's token may be fine, so it should not start a new login.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 public final class IntrospectionVerifier implements TokenVerifier {
 

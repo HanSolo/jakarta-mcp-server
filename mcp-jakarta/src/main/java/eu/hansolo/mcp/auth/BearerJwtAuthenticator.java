@@ -10,6 +10,9 @@ import java.time.Clock;
  * Default authenticator: {@code Authorization: Bearer <token>}. A JWT is verified locally by {@link JwtVerifier}; if
  * {@code mcp.auth.introspection-uri} is set, every token is instead sent to the authorization server's introspection endpoint
  * (RFC 7662) by {@link IntrospectionVerifier}, which is what opaque access tokens need.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 @Singleton
 public class BearerJwtAuthenticator implements McpAuthenticator {

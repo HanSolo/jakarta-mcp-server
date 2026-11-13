@@ -9,6 +9,10 @@ import java.util.function.Consumer;
  * Everything the server stores about one task. Immutable; a change makes a new record with {@code version + 1}, and a
  * {@link TaskStore} replaces a record only if its version is still the one the change was based on (compare and set).
  *
+ * <p><b>Provisional.</b> The components of this record change when the task engine gains a feature (restartable tasks, external jobs), and
+ * the canonical constructor changes with them. Read a record through its accessors and change it with {@link #edit}; build one from stored
+ * columns only in a {@link TaskStore} implementation, which is covered by the provisional SPI note on that interface.
+ *
  * @param id              the task id: unguessable, and a bearer token for the stored state
  * @param owner           who created the task ({@code Caller.subject()}, or {@code anonymous}); only the owner may use it
  * @param tool            the name of the tool that created it
@@ -35,6 +39,7 @@ import java.util.function.Consumer;
  *                        so that the other instances leave the task alone
  * @param pollFailures    how many polls in a row have failed
  * @param version         starts at 0, grows by one with every change
+ *
  */
 public record TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, int attempt, boolean restartable, JsonObject call, JsonObject handle, Instant nextPollAt, int pollFailures, long version) {
 

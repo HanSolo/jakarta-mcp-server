@@ -29,6 +29,9 @@ import java.util.Set;
  *   <li>{@code mcp.auth.introspection-require-audience}: default true; false accepts an answer without {@code aud} (a wrong {@code aud} is always refused).</li>
  *   <li>{@code mcp.auth.clock-skew-seconds} (60), {@code mcp.auth.jwks-cache-seconds} (300), {@code mcp.auth.jwks-min-refresh-seconds} (30).</li>
  * </ul>
+ *
+ * <p>The settings this class reads ({@code mcp.auth.*}) are the stable contract. {@link #AuthConfig()} and {@link #disabled()} are stable
+ * too; the constructors with arguments exist for tests and can change in any release, so an application configures authentication through settings.
  */
 @Singleton
 public class AuthConfig {

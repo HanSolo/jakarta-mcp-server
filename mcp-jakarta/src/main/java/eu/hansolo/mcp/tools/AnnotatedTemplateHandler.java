@@ -13,7 +13,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** A resource template backed by one {@link McpResource} method whose {@code uriTemplate} is set. */
+/**
+ * A resource template backed by one {@link McpResource} method whose {@code uriTemplate} is set.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
+ */
 public final class AnnotatedTemplateHandler implements McpResourceTemplateHandler {
 
     private final String         uriTemplate;

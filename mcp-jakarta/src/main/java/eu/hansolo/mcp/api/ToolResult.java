@@ -5,7 +5,12 @@ import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonValue;
 
-/** The outcome of a tool call: either a final result or a request for more input from the client. */
+/**
+ * The outcome of a tool call: either a final result or a request for more input from the client.
+ *
+ * <p><b>Sealed.</b> Applications create these values with the factory methods and return them; they do not switch over them. A minor release
+ * can add a variant (the 0.9.0 release added one to {@code ToolResult}), which would break an exhaustive {@code switch} in application code.
+ */
 public sealed interface ToolResult permits ToolResult.Complete, ToolResult.InputRequired, ToolResult.Task, ToolResult.ExternalTask {
 
     /**

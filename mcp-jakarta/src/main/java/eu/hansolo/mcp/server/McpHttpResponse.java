@@ -11,6 +11,9 @@ import java.util.Map;
  * @param headers extra response headers such as WWW-Authenticate, never null
  * @param stream  non-null for a Server-Sent Events response: the transport commits the status and headers, then calls it to
  *                produce the events; null for an ordinary response
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 public record McpHttpResponse(int status, String body, Map<String, String> headers, Streaming stream) {
 

@@ -23,6 +23,9 @@ import java.util.Set;
  * Finds the beans that carry {@code @McpTool}, {@code @McpResource} or {@code @McpPrompt} methods and wraps each method in a
  * handler. Every call fetches a fresh contextual reference, so scopes, interceptors and decorators of the bean apply exactly as for
  * any other CDI call. Dependent-scoped beans are created per call and destroyed after it.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 @Singleton
 public class CdiAnnotationScanner {

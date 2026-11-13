@@ -12,7 +12,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** A fixed resource backed by one {@link McpResource} method. */
+/**
+ * A fixed resource backed by one {@link McpResource} method.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
+ */
 public final class AnnotatedResourceHandler implements McpResourceHandler {
 
     private final String         uri;

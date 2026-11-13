@@ -25,6 +25,9 @@ import java.util.Set;
  * Validates a compact-serialized JWT access token: algorithm allow-list (RS256, ES256 only; never "none" or HMAC), signature
  * against keys from the configured issuer, then {@code iss}, {@code aud} (RFC 8707 resource binding), {@code exp} and {@code nbf}.
  * Header fields that name keys ({@code jku}, {@code jwk}, {@code x5u}) are ignored, so a token can never make the server fetch anything.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 public final class JwtVerifier implements TokenVerifier {
 

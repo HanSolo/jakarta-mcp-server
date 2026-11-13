@@ -32,7 +32,7 @@ class AnnotatedCompletionTest {
     }
 
 
-    private final List<AnnotatedCompletionHandler> handlers = CompletionScanner.scan(Sample.class, BeanSource.of(new Sample()));
+    private final List<McpCompletionHandler> handlers = CompletionScanner.scan(Sample.class, BeanSource.of(new Sample()));
 
     private CompletionCall call(McpCompletionHandler.Kind kind, String target, String argument, String value) {
         return new CompletionCall(kind, target, argument, value, Map.of("a", "b"), Json.createObjectBuilder().build(), null, new Caller("alice", Set.of(), Json.createObjectBuilder().build()));
@@ -40,12 +40,12 @@ class AnnotatedCompletionTest {
 
     @Test
     void methodsBecomeHandlersForTheirTargetAndArgument() throws Exception {
-        AnnotatedCompletionHandler styles = handlers.stream().filter(h -> h.argument().equals("style")).findFirst().orElseThrow();
+        McpCompletionHandler styles = handlers.stream().filter(h -> h.argument().equals("style")).findFirst().orElseThrow();
         assertEquals(McpCompletionHandler.Kind.PROMPT, styles.kind());
         assertEquals("p", styles.target());
         assertEquals(Set.of("s:read"), styles.requiredScopes());
         assertEquals(List.of("ab1", "ab2"), styles.complete(call(styles.kind(), "p", "style", "ab")).values());
-        AnnotatedCompletionHandler ids = handlers.stream().filter(h -> h.argument().equals("id")).findFirst().orElseThrow();
+        McpCompletionHandler ids = handlers.stream().filter(h -> h.argument().equals("id")).findFirst().orElseThrow();
         assertEquals(McpCompletionHandler.Kind.RESOURCE_TEMPLATE, ids.kind());
         assertEquals(List.of("id:b:alice"), ids.complete(call(ids.kind(), "x://{id}", "id", "")).values());
     }

@@ -1,5 +1,20 @@
 # Changelog
 
+
+## Unreleased
+
+### Added
+- **`InterceptorsIT` and fixture classes (`Audited`, `AuditInterceptor`, `AuditedTool`, `AuditedHandlerTool`, `CallLog`, `GET`/`DELETE /admin/calls`):** show that audit, a policy gate and a rate limit can be built around tools with a plain CDI interceptor, for `@McpTool` methods and for `McpToolHandler` beans, without a hook from the library.
+- **Design note `docs/design/api-review-1.0.0.md`:** which classes 1.0.0 freezes, which are internal or provisional, and why.
+- **README:** a section "Adding the library to your own application" (dependency, `-parameters`, registering the endpoint with `getClasses()`, what a failed tool declaration does, `tools/list` with curl); a note on `java.time` types and `List` returns; the confirmation form and the sensitive-text pitfall under "Elicitation"; "Rate limiting" under "Non-goals" (a gateway or a JAX-RS filter does it, not the library).
+
+### Changed
+- `ToolScanner.scan`, `PromptScanner.scan`, `CompletionScanner.scan` and `ResourceScanner.scan` return the interfaces (`List<McpToolHandler>`, `List<McpPromptHandler>`, `List<McpCompletionHandler>`, and `Found(List<McpResourceHandler>, List<McpResourceTemplateHandler>)`) instead of the `Annotated*Handler` classes. Code that only uses the interface methods compiles unchanged; a variable declared with the old class type needs the interface.
+- Javadoc: the `Annotated*Handler` classes, `CdiAnnotationScanner`, `SchemaGenerator`, `JsonConverter`, `JsonMapper`, `ResultMapper`, `BearerJwtAuthenticator`, `JwtVerifier`, `JwksKeyResolver`, `IntrospectionVerifier`, `ListenExecutor` and `McpHttpResponse` are marked internal; `TaskStore` and `TaskRecord` provisional; the sealed result types document that a variant can be added. No code change.
+- README "Stable API and internals" lists what 1.0.0 freezes per package, the provisional SPI, the sealed types, the rule for adding record components, and what the protocol promise is (one specification version per release line).
+- CI: `actions/checkout` 5, `actions/setup-node` 5 and `actions/upload-artifact` 6, which run on Node 24 (the runner warned that the old versions declare Node 20).
+
+
 ## 0.9.0 (2026-11-11)
 
 ### Added
@@ -7,7 +22,6 @@
 - **Argument validation: `unevaluatedProperties`, `unevaluatedItems` and `dependentSchemas`** are checked, counting what `properties`, `patternProperties`, `additionalProperties`, `prefixItems`, `items`, `contains` and the schemas applied in place (`$ref`, `allOf`, the matching `anyOf`/`oneOf` branches, `if`/`then`/`else`, `dependentSchemas`) have evaluated.
 - **Argument validation: `format`** can be checked with `mcp.validation.formats=true` (default false, as `format` is an annotation in JSON Schema 2020-12): `date-time`, `date`, `time`, `duration`, `email`, `hostname`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `uuid`, `json-pointer`, `regex`. Other format names are accepted.
 - **Tests for the 0.8.0 paths that had none:** `JdbcTaskStoreTest` creates a 0.7.0 table, checks the startup refusal, applies the documented `ALTER TABLE` statements and uses the table; `TasksClusterBase` stops a third instance gracefully (with a lease of a minute) and expects another instance to finish its restartable task.
-
 - **Dynamic registration of resources, resource templates and completions** through `McpRegistrations` (`addResource`/`replaceResource`/`removeResource`, `addResourceTemplate`/..., `addCompletion`/`replaceCompletion`/`removeCompletion`). Resources and templates send `notifications/resources/list_changed`; the `resources` and `completions` capabilities are switched on by the first registration. Handlers are checked as at startup; a resource that a tool points at with `_meta.ui.resourceUri` cannot be removed; removing a prompt or template drops its completions.
 - **Dynamic skills (`"resources": "dynamic"`):** `McpSkill.dynamic(name, supplier)`, or `dynamic()`, `file(path)` and `paths()` on your own `McpSkill`, for skills whose content is generated per request. The entry in `skills/list` and `skills/get` carries `"resources": "dynamic"` instead of a manifest; frontmatter, files and directory listings are produced for every request, after the scope check. `SkillSet.Located` now reads its file lazily (`read()`).
 - **New module `mcp-jakarta-bridge-jms`:** `JmsNotificationBridge`, a ready-made `McpNotificationBridge` on a Jakarta Messaging topic. Set `mcp.bridge.jms.connection-factory` (JNDI name); topic, credentials, time to live and reconnect pause are optional settings. Non-durable subscription per instance, a listener thread that polls with `receive` (works on container-managed connection factories) and reconnects, malformed messages ignored. Without the setting it does nothing.
@@ -15,19 +29,20 @@
 
 ### Changed
 - `Elicitation.form(...)` accepts a form without properties, which asks for a plain accept/decline confirmation. Before, `schema()` and `toJson()` threw "A form needs at least one property", so a confirmation had to be built as raw JSON or with a dummy checkbox.
-
 - A `double` without a fractional part is written as `5`, not `5.0`, in structured results; a `float` is written with the digits it prints with (`0.1`, not `0.10000000149011612`).
 - The startup error for a task table without the columns of 0.8.0 names them and points to the `ALTER TABLE` statements.
-
 - **Breaking for custom `TaskStore` implementations:** the interface has a new method, `pollDue(Instant now, int limit)`, and `TaskRecord` has three new components, `handle`, `nextPollAt` and `pollFailures` (before `version`). A store must keep the three fields and return the non-terminal tasks whose `nextPollAt` is set and not after `now`.
 - **`JdbcTaskStore` needs three more columns and an index** (`handle_json`, `next_poll_at`, `poll_failures`, index on `next_poll_at`). `create-schema` does not add them to an existing table; the statements are in the class documentation. A table from 0.8.0 needs only these four statements, one from 0.7.0 needs all seven. The startup error says so, also when `create-schema=true` meets an old table.
 - `ToolResult.text`, `error` and `structured(JsonObject)` return `ToolResult.Complete` instead of `ToolResult` (source compatible).
 - Javadoc marks `McpRequestHandler`, `McpRegistry`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig` and `TaskConfig` as internal; README gains a "Stable API and internals" section.
+- `scripts/release-check.sh`, the comment in the root `pom.xml` and the "Releasing to Maven Central" section name the fourth module, `mcp-jakarta-bridge-jms`, in the upload command (`-pl .,mcp-jakarta,mcp-jakarta-tasks-jdbc,mcp-jakarta-bridge-jms`).
+- README: a "Non-goals" section (logging, sampling and roots, SSE and progress for `resources/read` and `prompts/get`, remote `$ref`, 2025-11-25) and a shorter "Not implemented yet".
 
 ### Removed
 - The 18-argument `TaskRecord` constructor (a record that is not restartable, on its first attempt). Use the canonical constructor, which has `attempt`, `restartable` and `call` before `version` (pass `1, false, null, null, null, 0` for the old behavior; `handle`, `nextPollAt` and `pollFailures` are new, see above). Only custom `TaskStore` implementations that built records this way are affected; `TaskRecord.create(...)` is unchanged.
 
 ### Fixed
+- `RestartableTasksTest`: the tests started another instance before the first worker had counted its run, so the worker of the take-over could count as the first run and block; they now wait for the first run to start (test only).
 - The tickets example's `close_ticket` binds the user's confirmation to the ticket number and resolution it was asked about, with a signed `requestState` for the tool and caller. Before, any answer was accepted for any ticket number on the retry. The example's `TicketTools` constructor takes a `McpRequestStates` as third argument.
 - A server instance that stops while it runs tasks now ends those tasks as `failed` (non-restartable) or hands them over (restartable) reliably. Before, the task could be written as `cancelled` because the stopping worker raced with `close()`, and a heartbeat that was running during shutdown could extend the lease of a task that had just been handed over.
 - A hand-over that cannot be written (the store is unreachable while the server stops) leaves the task `working` so that its lease runs out and another instance takes it over; before, the worker wrote `cancelled`.

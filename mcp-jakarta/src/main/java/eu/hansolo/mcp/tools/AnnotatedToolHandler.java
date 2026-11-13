@@ -22,7 +22,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** A {@link McpToolHandler} backed by one {@link McpTool} method. Schemas are computed once, when the handler is created. */
+/**
+ * A {@link McpToolHandler} backed by one {@link McpTool} method. Schemas are computed once, when the handler is created.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
+ */
 public final class AnnotatedToolHandler implements McpToolHandler {
 
     private final String        name;

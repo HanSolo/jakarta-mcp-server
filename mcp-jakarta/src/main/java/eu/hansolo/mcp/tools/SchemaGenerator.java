@@ -30,6 +30,9 @@ import java.util.Set;
  * with {@code $defs} and {@code $ref} ({@code {"$ref": "#/$defs/Node"}}); every other type is written inline. A recursive
  * record needs a way to end the recursion in the data, so declare that component {@code Optional} or as a collection: a
  * {@code null} in a component that the schema requires does not validate.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 public final class SchemaGenerator {
 

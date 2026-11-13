@@ -37,6 +37,9 @@ import java.util.logging.Logger;
  * Keys from the issuer's JWKS endpoint ({@code mcp.auth.jwks-uri}). The document is cached; an unknown {@code kid} triggers at
  * most one refresh per {@code mcp.auth.jwks-min-refresh-seconds}, so key rotation works without letting garbage tokens turn this
  * server into a request amplifier. If a refresh fails the previous keys stay in use. The URL comes from configuration only.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 @Singleton
 public class JwksKeyResolver implements KeyResolver {

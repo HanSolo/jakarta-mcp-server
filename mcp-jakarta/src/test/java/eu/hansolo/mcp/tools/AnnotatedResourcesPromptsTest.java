@@ -6,6 +6,7 @@ import eu.hansolo.mcp.api.McpParam;
 import eu.hansolo.mcp.api.McpPrompt;
 import eu.hansolo.mcp.api.McpPromptHandler;
 import eu.hansolo.mcp.api.McpResource;
+import eu.hansolo.mcp.api.McpResourceHandler;
 import eu.hansolo.mcp.api.PromptCall;
 import eu.hansolo.mcp.api.PromptMessage;
 import eu.hansolo.mcp.api.PromptResult;
@@ -82,7 +83,7 @@ class AnnotatedResourcesPromptsTest {
         return new ResourceCall(uri, variables, Json.createObjectBuilder().build(), null, null, null, new Caller("alice", Set.of(), Json.createObjectBuilder().build()));
     }
 
-    private AnnotatedResourceHandler resource(String uri) {
+    private McpResourceHandler resource(String uri) {
         return found.resources().stream().filter(r -> r.uri().equals(uri)).findFirst().orElseThrow();
     }
 
@@ -99,7 +100,7 @@ class AnnotatedResourcesPromptsTest {
 
     @Test
     void recordResultsBecomeJsonTextAndKeepScopesAndDescription() throws Exception {
-        AnnotatedResourceHandler info = resource("config://info");
+        McpResourceHandler info = resource("config://info");
         assertEquals("info", info.name());
         assertEquals("Info", info.description());
         assertEquals("application/json", info.mimeType());

@@ -16,6 +16,10 @@ import java.util.Optional;
  * Implement the store as a CDI bean (any bean-defining scope) to replace the default {@link InMemoryTaskStore}.
  *
  * <p>The store knows nothing about owners: the server checks the owner after {@link #find}.
+ *
+ * <p><b>Provisional SPI.</b> A store implementation is the one place where an application depends on the shape of {@link TaskRecord},
+ * which has gained components in several releases. Methods can be added to this interface and components to {@code TaskRecord} in a minor
+ * release, and the changelog says so; a custom store is expected to follow. Everything else in the tasks API is covered by the 1.x promise.
  */
 public interface TaskStore {
 

@@ -27,6 +27,9 @@ import java.util.Set;
  * Converts client-supplied JSON to the Java parameter types of an {@code @McpTool} method. The server only schema-checks the
  * top level of the arguments, so this class is where types, ranges and nested structure are really enforced; every problem is
  * an invalid-arguments error that names the offending path.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 public final class JsonConverter {
 

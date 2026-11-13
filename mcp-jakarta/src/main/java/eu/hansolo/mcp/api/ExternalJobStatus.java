@@ -1,6 +1,11 @@
 package eu.hansolo.mcp.api;
 
-/** What {@link ExternalJob#poll} found out about a job in another system. */
+/**
+ * What {@link ExternalJob#poll} found out about a job in another system.
+ *
+ * <p><b>Sealed.</b> Applications create these values with the factory methods and return them; they do not switch over them. A minor release
+ * can add a variant, which would break an exhaustive {@code switch} in application code.
+ */
 public sealed interface ExternalJobStatus permits ExternalJobStatus.Running, ExternalJobStatus.Completed, ExternalJobStatus.Failed {
 
     /**

@@ -4,7 +4,12 @@ import jakarta.json.JsonObject;
 
 import java.util.List;
 
-/** The outcome of reading a resource: the contents, or a request for more input from the client (multi round-trip). */
+/**
+ * The outcome of reading a resource: the contents, or a request for more input from the client (multi round-trip).
+ *
+ * <p><b>Sealed.</b> Applications create these values with the factory methods and return them; they do not switch over them. A minor release
+ * can add a variant, which would break an exhaustive {@code switch} in application code.
+ */
 public sealed interface ResourceResult permits ResourceResult.Complete, ResourceResult.InputRequired {
 
     /**

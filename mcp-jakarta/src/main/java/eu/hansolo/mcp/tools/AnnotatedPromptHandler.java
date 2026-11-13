@@ -21,7 +21,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-/** A prompt backed by one {@link McpPrompt} method. Arguments are strings, as the protocol defines them. */
+/**
+ * A prompt backed by one {@link McpPrompt} method. Arguments are strings, as the protocol defines them.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
+ */
 public final class AnnotatedPromptHandler implements McpPromptHandler {
 
     private final String                name;

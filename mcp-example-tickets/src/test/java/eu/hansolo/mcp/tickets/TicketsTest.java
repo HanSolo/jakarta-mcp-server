@@ -16,7 +16,6 @@ import eu.hansolo.mcp.protocol.McpProtocolException;
 import eu.hansolo.mcp.server.McpConfig;
 import eu.hansolo.mcp.server.McpNotifications;
 import eu.hansolo.mcp.server.McpRequestStates;
-import eu.hansolo.mcp.tools.AnnotatedCompletionHandler;
 import eu.hansolo.mcp.tools.BeanSource;
 import eu.hansolo.mcp.tools.CompletionScanner;
 import eu.hansolo.mcp.tools.PromptScanner;
@@ -244,9 +243,9 @@ class TicketsTest {
     @Test
     void completionSuggestsTicketNumbers() throws Exception {
         seeded();
-        List<AnnotatedCompletionHandler> handlers = CompletionScanner.scan(TicketCompletions.class, BeanSource.of(new TicketCompletions(store)));
+        List<McpCompletionHandler> handlers = CompletionScanner.scan(TicketCompletions.class, BeanSource.of(new TicketCompletions(store)));
         assertEquals(2, handlers.size());
-        for (AnnotatedCompletionHandler h : handlers) {
+        for (McpCompletionHandler h : handlers) {
             assertEquals(Set.of("tickets:read"), h.requiredScopes());
             CompletionCall call = new CompletionCall(h.kind(), h.target(), h.argument(), "1", Map.of(), NONE, null, ALICE);
             assertEquals(List.of("1", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"), h.complete(call).values());

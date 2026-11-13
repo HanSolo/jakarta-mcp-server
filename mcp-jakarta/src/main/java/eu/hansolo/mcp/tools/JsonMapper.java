@@ -14,7 +14,12 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 
-/** The reverse of {@link JsonConverter}: Java values returned by tools to JSON. An empty {@code Optional} record component is omitted. */
+/**
+ * The reverse of {@link JsonConverter}: Java values returned by tools to JSON. An empty {@code Optional} record component is omitted.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
+ */
 public final class JsonMapper {
 
     private static final int MAX_DEPTH = 32;

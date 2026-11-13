@@ -1,6 +1,8 @@
 package eu.hansolo.mcp.tools;
 
 import eu.hansolo.mcp.api.McpResource;
+import eu.hansolo.mcp.api.McpResourceHandler;
+import eu.hansolo.mcp.api.McpResourceTemplateHandler;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -18,15 +20,15 @@ public final class ResourceScanner {
     }
 
     /** The result of scanning one class: fixed resources and templates, in method order. */
-    public record Found(List<AnnotatedResourceHandler> resources, List<AnnotatedTemplateHandler> templates) {
+    public record Found(List<McpResourceHandler> resources, List<McpResourceTemplateHandler> templates) {
     }
 
     /**
      * @throws IllegalStateException when a method sets both or neither of {@code uri} and {@code uriTemplate}, is not public, or cannot be bound
      */
     public static Found scan(Class<?> beanClass, BeanSource source) {
-        List<AnnotatedResourceHandler> resources = new ArrayList<>();
-        List<AnnotatedTemplateHandler> templates = new ArrayList<>();
+        List<McpResourceHandler> resources = new ArrayList<>();
+        List<McpResourceTemplateHandler> templates = new ArrayList<>();
         for (Method method : MethodFinder.annotated(beanClass, McpResource.class)) {
             McpResource annotation = method.getAnnotation(McpResource.class);
             boolean fixed = !annotation.uri().isEmpty();

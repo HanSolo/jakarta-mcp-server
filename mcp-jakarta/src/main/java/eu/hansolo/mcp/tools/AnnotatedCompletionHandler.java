@@ -15,7 +15,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** A completion source backed by one {@link McpComplete} method. */
+/**
+ * A completion source backed by one {@link McpComplete} method.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
+ */
 public final class AnnotatedCompletionHandler implements McpCompletionHandler {
 
     private final Kind        kind;

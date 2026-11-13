@@ -28,6 +28,9 @@ import java.util.logging.Logger;
  * }</pre>
  *
  * If that name cannot be looked up, the virtual threads are used and a warning is logged.
+ *
+ * <p><b>Internal.</b> Not part of the stable API: this class is public only because other packages of this library use it,
+ * and it can change in any release. Applications should not call it.
  */
 @Singleton
 public class ListenExecutor {
