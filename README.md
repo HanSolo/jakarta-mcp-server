@@ -224,6 +224,15 @@ For full control implement `McpToolHandler` in a CDI bean. `GreetTool` shows Mul
 
 Tools must not rely on state between calls. If a tool needs to continue across calls, return an explicit handle for the model to pass back.
 
+### Audit, policy gates and rate limits
+
+None of these needs a hook from this library. Tools are called through the CDI proxy, so an interceptor on the tool bean sees every call and its arguments, and can refuse it before the method runs. `InterceptorsIT` runs the pattern on all three servers, with `AuditInterceptor` in `mcp-it-fixture` as the example: it records each call (audit), refuses the text `blocked` (a policy gate) and allows a burst only three times (a rate limit).
+
+- Bind the interceptor to the tool **method**. On an `McpToolHandler` bean, a binding on the whole class also catches the registry's calls to `name()`, `description()` and the others.
+- Refuse an `@McpTool` method by throwing `ToolExecutionException`, and an `McpToolHandler.call` by returning `ToolResult.error(...)`. The client gets a result with `isError` and your message, and the tool itself never runs.
+- A rate limit in an interceptor counts per process. With several instances, or to stop floods that never reach a tool, limit in front of the endpoint (see "Non-goals").
+- Not covered: `@RolesAllowed`. It needs the container's security context, which this library's own token validation does not set. Check scopes with `@McpTool(scopes = ...)` or read `Caller` in an interceptor.
+
 ### Request state in multi round-trip tools
 
 `requestState` travels through the client, which can read, change and replay it, so a tool must not trust it as it arrives. Inject `McpRequestStates` and let it sign what you hand out:
