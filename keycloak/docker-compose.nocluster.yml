@@ -1,0 +1,8 @@
+# Local-only override: starts Payara Micro without clustering. Without it, the container can fail at startup with
+# "Starting the MulticastService failed ... No such device (setsockopt failed)" when the network has no multicast.
+#
+#   docker compose -f keycloak/docker-compose.yml -f keycloak/docker-compose.tickets.yml -f keycloak/docker-compose.nocluster.yml up
+services:
+  mcp:
+    environment:
+      PAYARA_ARGS: --nocluster
