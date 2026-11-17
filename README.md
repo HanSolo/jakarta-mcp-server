@@ -191,6 +191,50 @@ Rules: the method must be public and non-static (the call goes through the CDI p
 
 Not supported: `java.time` types (`LocalDate`, `Instant`, ...) as parameters or record components; the tool is refused at startup ("unsupported type"). Take a `String` and parse it in the tool, and say the format in `@McpParam(description = "ISO date, 2026-11-24")`. A returned `List` or array becomes a text with the JSON array, not structured content; return a record that holds the list (`record Visits(List<Visit> visits)`) when the client should get an object and an `outputSchema`.
 
+### Coming from REST and JSON-B
+
+A tool is not a REST resource: its parameters and results are JSON described by a generated schema, and only the types listed in the table above are converted. Everything else fails loudly, never by guessing (`Cannot convert java.time.LocalDateTime to JSON`). The usual translations:
+
+| You have | In the tool, use |
+| --- | --- |
+| `LocalDate`, `LocalDateTime`, `Instant`, `OffsetDateTime`, `Duration` | A `String` in ISO-8601 (`value.toString()` out, `LocalDateTime.parse(text)` in). Say the format in `@McpParam(description = ...)` |
+| `java.util.Date`, `Calendar` | Convert to `Instant` first, then as above |
+| `UUID`, `URI`, `Locale` | A `String` (`toString()` out, `UUID.fromString(text)` in) |
+| A JPA entity or other POJO | A `record` with the fields the model needs, filled by your code. Do not return entities: lazy collections and back-references do not belong in a result |
+| A `List` as the result | Works (the result is text containing the JSON array); to get structured content and an `outputSchema`, return a record that holds the list |
+| A `jakarta.ws.rs.core.Response` | Return its entity, and throw `ToolExecutionException` for an error status |
+| `NotFoundException` and other exceptions | Catch them and throw `ToolExecutionException("Ticket 42 does not exist")`. Any other exception is logged and replaced by a generic message, so the model cannot learn from it |
+| Bean Validation (`@NotNull`, `@Size`, ...) | Not evaluated. Check in the method and throw `ToolExecutionException` with the reason; types, ranges and nesting are already checked from the schema |
+| `@RolesAllowed` | Not evaluated. Use `@McpTool(scopes = ...)` with OAuth, or check `Caller` in the method |
+
+To make an existing REST endpoint available, call the service behind it from the tool bean (inject the same CDI bean the resource uses) instead of making an HTTP call to yourself:
+
+```java
+@ApplicationScoped
+public class AppointmentTools {
+
+    public record AppointmentView(long id, String duck, String startsAt) {
+    }
+
+    @Inject AppointmentService service;
+
+    @McpTool(description = "Shows an appointment.", readOnlyHint = McpTool.Hint.TRUE)
+    public AppointmentView appointment(@McpParam(description = "Appointment id") long id) {
+        Appointment a = service.find(id).orElseThrow(() -> new ToolExecutionException("No appointment " + id));
+        return new AppointmentView(a.getId(), a.getDuck().getName(), a.getStartsAt().toString());   // LocalDateTime -> ISO text
+    }
+
+    @McpTool(description = "Books an appointment.")
+    public AppointmentView book(long duckId, @McpParam(description = "ISO date-time, 2026-11-24T10:30:00") String startsAt) {
+        try {
+            return view(service.book(duckId, LocalDateTime.parse(startsAt)));
+        } catch (DateTimeParseException e) {
+            throw new ToolExecutionException("startsAt must look like 2026-11-24T10:30:00");
+        }
+    }
+}
+```
+
 ### Resources and prompts
 
 ```java
