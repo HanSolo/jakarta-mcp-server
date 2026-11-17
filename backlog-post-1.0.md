@@ -66,3 +66,68 @@ Priority = onboarding pain divided by cost. Size: S under a day, M a few days, L
 - Whether `SchemaValidator` formats cover `date-time`, `date`, `time`, `uuid`, `uri`, `duration`.
 - Whether `Settings` has other callers that would break when a config source is added.
 - Which of the three servers (Payara, WildFly, Liberty) expose Bean Validation and MicroProfile Config by default in the IT setup.
+
+## 5. Rounding out the server (beyond the Jakarta onboarding items)
+
+Basis: README "Not implemented yet", "Non-goals" and "Decisions worth a second look", `docs/design/*`, and what we learned in the 0.9.0 and 1.0.0 work. Tags: [Certain] seen in the repo or stated by you, [Likely] inference, [Guessing] gap filling. "When": **pre-1.0** means no code or promise changes (docs, CI, tests, GitHub settings) and may happen now; **post-1.0** waits for the release.
+
+### 5.1 Gates for 1.0.0 (mostly yours; listed so they are not forgotten)
+
+| # | Item | When | Notes |
+| --- | --- | --- | --- |
+| R1 | Real-host tests with OAuth: MCP Inspector against the Keycloak realm; one skills host; Claude Desktop | pre-1.0 | [Certain] duck-clinic was tested unauthenticated with Inspector and Claude Code; the OAuth path with a real host is untested. |
+| R2 | duck-clinic (or another app) on Liberty and WildFly, not only Payara | pre-1.0 | The library's own ITs cover the three servers; an application with a real data layer is a different test. |
+| R3 | An outsider reads only the README and gets a tool running | pre-1.0 | The "Adding the library to your own application" section is the target. |
+| R4 | Javadoc batch 14 (about 149 undocumented public declarations in the frozen packages, worst first: `Content`, `AuthConfig`, `TaskRecord`, `Elicitation`, `McpProtocolException`, `ToolResult`, `Apps`) | pre-1.0 | Doc comments only. |
+| R5 | Answer D4 (the protocol policy paragraph) and whether `Apps` / `McpAppsExtension` are provisional like Tasks | pre-1.0 | Both belong in the README "Stable API and internals" section. |
+| R6 | CHANGELOG hygiene: check the 0.9.0 date, move entries that were not in 0.9.0 (for example `InterceptorsIT`) to Unreleased | pre-1.0 | |
+| R7 | Create the `v0.7.0` GitHub release if it is still missing | pre-1.0 | |
+
+### 5.2 Compatibility and reach
+
+| # | Item | When | Notes |
+| --- | --- | --- | --- |
+| R8 | **Jakarta EE 10 and Java 17 baseline: find out whether the library could run there** | pre-1.0 investigation, any change post-1.0 | [Guessing] a large part of production Jakarta EE (Payara 6, WildFly 3x, older Liberty, TomEE) is still on EE 10. Today the build is EE 11 (`jakartaee-web-api` 11.0.0, provided), bytecode Java 21, and async mode uses virtual threads. If only a few APIs are EE 11-only, a compatibility note or a second build could be a large adoption win; if many are, say so in the README. Measure first: compile the sources against the EE 10 API in a scratch build, list what fails. |
+| R9 | Wider server matrix: GlassFish, TomEE, Quarkus/Helidon (as far as they offer the needed APIs) | post-1.0 | [Certain] today: Payara, WildFly, Liberty. Add to `it.sh` only if cheap; otherwise document "untested". |
+| R10 | Host compatibility table in the README: which MCP hosts were tried (Inspector, Claude Code, Claude Desktop, VS Code, others), with the version and what worked | pre-1.0 (README) | [Likely] users ask this first. Fill it from real tests only. |
+| R11 | Interop with other implementations: run the Java SDK 3.x client (once it supports 2026-07-28) against our server, and our Jakarta client against other servers | post-1.0 | [Certain] 3.x is planned, not released. The separate client project is the first counterpart. |
+
+### 5.3 Spec tracking
+
+| # | Item | When | Notes |
+| --- | --- | --- | --- |
+| R12 | A written process for the next spec revision: watch the spec repository, decide how two versions could be served at once, and what stays in `McpVersions` | post-1.0 | Follows from D4: 1.x supports 2026-07-28; a later version arrives in a minor release if the API can carry it, otherwise in 2.0. |
+| R13 | Extension tracking: Tasks, Apps and Skills follow their own specifications and are younger than the core | ongoing | Changelog entry per change; re-run `scripts/client-check`. |
+| R14 | Conformance: the tool is `@alpha`; the `tasks-status-notifications` scenario is skipped | ongoing | Re-check on each tool release; remove the skip when the suite supports it. |
+| R15 | Tasks for methods other than `tools/call` | post-1.0 | [Certain] listed under "Not implemented yet"; the spec is still open on it. |
+| R16 | Further bridge transports (Kafka, a database notification, Redis, HTTP) | post-1.0, on demand | [Certain] only Jakarta Messaging exists; `McpNotificationBridge` is the extension point. Do not build without a user asking, because each is a new artifact on Central. |
+
+### 5.4 Production readiness
+
+| # | Item | When | Notes |
+| --- | --- | --- | --- |
+| R17 | **Threat model and security review** written down: Origin and DNS rebinding (the decision is in the README), token audience binding, no token passthrough, SSRF (no remote `$ref`, JWKS fixed by configuration), request-state signing, request and header size limits | pre-1.0 (doc) | [Likely] most of it exists in code and README but is scattered. A `SECURITY.md` with a reporting address belongs to it. Verify the size limits before claiming them. |
+| R18 | Signing key handling for request state (`McpRequestStates`): rotation, and the behaviour across several instances | pre-1.0 (doc), post-1.0 (code) | [Guessing] a shared key across instances is required for multi-round-trip tools behind a load balancer; check that the README says so. |
+| R19 | Load and soak baseline: many parallel `tools/call` with SSE, many `subscriptions/listen` streams, async mode with virtual threads, keep-alive behaviour behind a proxy | post-1.0 | [Guessing] nobody has measured it yet; even a coarse table helps. The README mentions the Payara 7 and Docker setup, not numbers. |
+| R20 | Graceful shutdown: open listen streams and running tasks at undeploy | post-1.0 | Test, then document. |
+| R21 | JDBC task store: schema migration. Today it is documented `ALTER TABLE` notes only | post-1.0 | [Certain] decided on 2026-11-11 (no automatic migration). Revisit if the schema changes again. |
+| R22 | Health and metrics: MicroProfile Health/Metrics/Telemetry integration | post-1.0 | Builds on the CDI events in backlog item 9. |
+
+### 5.5 Project hygiene and community
+
+| # | Item | When | Notes |
+| --- | --- | --- | --- |
+| R23 | `CONTRIBUTING.md` with the evolution rules (records keep old constructors as overloads, "Internal" paragraph for new internals, sealed types are not switched over) | pre-1.0 | The API review (section 4, items 2 and 3) already contains the text. |
+| R24 | Dependabot, CodeQL, and a pinned-versions policy for the GitHub Actions | pre-1.0 (CI only) | Replace the test dependency on an alpha `slf4j-simple` 2.1 with a stable version. |
+| R25 | SBOM and signed artifacts check for Central; one release script instead of manual steps | pre-1.0 | The release path ran for 0.9.0; document it in "Releasing to Maven Central" including the Central limits. |
+| R26 | Release budget plan: count artifacts per release (parent, `mcp-jakarta`, bridge-jms, tasks-jdbc, any BOM) and how many "releases" a 1.x release costs | pre-1.0 | [Certain] limit 7 per month, grace period until 10 December, reset on 1 December. A BOM would add an artifact; decide on the cost first. |
+| R27 | Getting-started material: a 10-minute tutorial, the duck-clinic integration written up as an example (with the owner's agreement), a Maven archetype or starter project | post-1.0 | [Likely] the biggest onboarding lever after the type fixes in section 2. |
+| R28 | Test support for application developers: a documented way to unit-test tool beans without a container (`ToolScanner.scan` with `BeanSource.of(bean)` is the stable path) and perhaps a `ToolCall` test builder | pre-1.0 (docs), post-1.0 (builder) | [Certain] `TicketsTest` uses the stable path. A test artifact would cost a release slot; start with docs. |
+| R29 | The Jakarta MCP client project | separate | Handover is `handover-mcp-client.md`. It also serves as the test counterpart for R11. |
+
+### 5.6 What I would do first
+
+1. [Likely] R8 (the EE 10 question): it decides how many users can try the library at all, and it only costs an afternoon of reading compile errors.
+2. R1 to R3 and R10: real-host evidence before the freeze, not after.
+3. R17 and R18 as documentation: they cost nothing and answer the questions a company's security review asks.
+4. Everything else in the post-1.0 column stays here until a user asks.
