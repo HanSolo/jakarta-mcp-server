@@ -9,6 +9,8 @@ import jakarta.enterprise.inject.Vetoed;
  * <p>This class is {@code @Vetoed}: the library archive uses bean discovery mode {@code all}, so without it the container would also
  * register this class itself, and the subclass would announce the extension twice ("Duplicate MCP extension"). {@code @Vetoed} is not
  * inherited, so the subclass is still a bean.
+ *
+ * <p><b>Provisional.</b> See {@link Apps}: outside the 1.x promise, can change in a minor release, with an entry in the changelog.
  */
 @Vetoed
 public class McpAppsExtension implements McpExtension {

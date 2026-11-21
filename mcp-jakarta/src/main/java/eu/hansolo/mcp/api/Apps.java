@@ -38,6 +38,9 @@ import java.util.regex.Pattern;
  * checks is the wiring: a tool's {@code ui} binding must point to a {@code ui://} resource this server has, visibility values must
  * be {@code model} or {@code app}, and the origins in a {@code csp} must be plain origins, because clients build a
  * Content-Security-Policy from them.
+ *
+ * <p><b>Provisional.</b> The MCP Apps extension is younger than the core protocol. Outside the 1.x promise: methods of this class can change
+ * in a minor release, with an entry in the changelog.
  */
 public final class Apps {
 
