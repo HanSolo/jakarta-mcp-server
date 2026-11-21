@@ -70,7 +70,7 @@ The code uses only Jakarta EE 11 Web Profile APIs and has now run on three serve
 mvn verify                                  # Maven 3.9.0+ and JDK 21 or newer (checked at build start); unit tests, and integration tests if Docker is available
 mvn verify -Dmaven.compiler.release=25      # only if every server you deploy to runs JDK 25
 mvn verify -Dmcp.image=payara/micro:<tag>   # pin the image (-Dpayara.image still works for Payara)
-mvn verify -Dmcp.server=wildfly              # or liberty; see "Supported servers"
+mvn verify -Dmcp.server=wildfly             # or liberty; see "Supported servers"
 
 java -jar payara-micro-7.x.jar --deploy mcp-example/target/mcp-example.war
 ```
