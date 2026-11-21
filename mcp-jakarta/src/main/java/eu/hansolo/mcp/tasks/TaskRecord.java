@@ -43,6 +43,7 @@ import java.util.function.Consumer;
  */
 public record TaskRecord(String id, String owner, String tool, TaskStatus status, String statusMessage, Instant createdAt, Instant lastUpdatedAt, Long ttlMs, Instant expiresAt, long pollIntervalMs, JsonObject result, JsonObject error, JsonObject inputRequests, JsonObject inputResponses, boolean cancelRequested, String workerId, Instant leaseUntil, int attempt, boolean restartable, JsonObject call, JsonObject handle, Instant nextPollAt, int pollFailures, long version) {
 
+    /** Replaces missing input maps with empty objects, raises {@code attempt} to at least 1 and {@code pollFailures} to at least 0. */
     public TaskRecord {
         inputRequests  = inputRequests == null ? JsonObject.EMPTY_JSON_OBJECT : inputRequests;
         inputResponses = inputResponses == null ? JsonObject.EMPTY_JSON_OBJECT : inputResponses;
@@ -97,6 +98,7 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
         return editor.build(now, touch);
     }
 
+    /** The same task with these changes, marked as touched at {@code now}. */
     public TaskRecord edit(Instant now, Consumer<Editor> changes) {
         return edit(now, true, changes);
     }
@@ -138,41 +140,49 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
         }
 
 
+        /** The new status. */
         public Editor status(TaskStatus status) {
             this.status = status;
             return this;
         }
 
+        /** The status message shown to clients, or null for none. */
         public Editor statusMessage(String statusMessage) {
             this.statusMessage = statusMessage;
             return this;
         }
 
+        /** The result of a completed task. */
         public Editor result(JsonObject result) {
             this.result = result;
             return this;
         }
 
+        /** The error of a failed task. */
         public Editor error(JsonObject error) {
             this.error = error;
             return this;
         }
 
+        /** What the task waits for while it is {@code input_required}, keyed by request name. */
         public Editor inputRequests(JsonObject inputRequests) {
             this.inputRequests = inputRequests;
             return this;
         }
 
+        /** The answers received so far, keyed by request name. */
         public Editor inputResponses(JsonObject inputResponses) {
             this.inputResponses = inputResponses;
             return this;
         }
 
+        /** Whether a client asked to cancel the task. */
         public Editor cancelRequested(boolean cancelRequested) {
             this.cancelRequested = cancelRequested;
             return this;
         }
 
+        /** The instance that runs the task and until when it holds the task. */
         public Editor lease(String workerId, Instant leaseUntil) {
             this.workerId   = workerId;
             this.leaseUntil = leaseUntil;
@@ -185,6 +195,7 @@ public record TaskRecord(String id, String owner, String tool, TaskStatus status
             return this;
         }
 
+        /** How many polls of the external job in a row have failed. */
         public Editor pollFailures(int pollFailures) {
             this.pollFailures = pollFailures;
             return this;

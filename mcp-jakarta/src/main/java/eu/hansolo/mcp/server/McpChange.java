@@ -30,6 +30,7 @@ public record McpChange(String origin, Kind kind, String uri) {
     private static final int VERSION = 1;
 
 
+    /** What changed. */
     public enum Kind {
         TOOLS_LIST_CHANGED("tools"),
         PROMPTS_LIST_CHANGED("prompts"),

@@ -13,6 +13,7 @@ public final class Scopes {
     }
 
 
+    /** True if one of the granted scopes is the required one or a broader one. */
     public static boolean satisfies(Set<String> granted, String required) {
         for (String scope : granted) {
             if (scope.equals(required) || required.startsWith(scope + ":")) {
@@ -22,6 +23,7 @@ public final class Scopes {
         return false;
     }
 
+    /** True if every required scope is satisfied, see {@link #satisfies}. */
     public static boolean satisfiesAll(Set<String> granted, Set<String> required) {
         return required.stream().allMatch(r -> satisfies(granted, r));
     }

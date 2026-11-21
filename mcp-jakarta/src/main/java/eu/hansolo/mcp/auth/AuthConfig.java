@@ -56,14 +56,17 @@ public class AuthConfig {
     private final boolean      introspectionRequireAudience;
 
 
+    /** The configuration from the {@code mcp.auth.*} settings (system properties, then environment variables). */
     public AuthConfig() {
         this(Settings.getBoolean("mcp.auth.enabled", false), Settings.get("mcp.auth.resource"), Settings.get("mcp.auth.issuer"), Settings.get("mcp.auth.jwks-uri"), Settings.get("mcp.auth.audience"), Settings.getList("mcp.auth.authorization-servers"), Settings.getList("mcp.auth.scopes-supported"), Settings.getList("mcp.auth.required-scopes"), Settings.getLong("mcp.auth.clock-skew-seconds", 60), Settings.getLong("mcp.auth.jwks-cache-seconds", 300), Settings.getLong("mcp.auth.jwks-min-refresh-seconds", 30), Settings.getBoolean("mcp.auth.jwks-allow-http", false), Settings.get("mcp.auth.introspection-uri"), Settings.get("mcp.auth.introspection-client-id"), Settings.get("mcp.auth.introspection-client-secret"), Settings.getLong("mcp.auth.introspection-cache-seconds", 30), Settings.getBoolean("mcp.auth.introspection-require-audience", true), Settings.getBoolean("mcp.auth.introspection-allow-http", false));
     }
 
+    /** For tests: a JWT configuration without introspection. Can change in any release; applications use the settings. */
     public AuthConfig(boolean enabled, String resource, String issuer, String jwksUri, String audience, List<String> authorizationServers, List<String> scopesSupported, List<String> requiredScopes, long clockSkewSeconds, long jwksCacheSeconds, long jwksMinRefreshSeconds, boolean jwksAllowHttp) {
         this(enabled, resource, issuer, jwksUri, audience, authorizationServers, scopesSupported, requiredScopes, clockSkewSeconds, jwksCacheSeconds, jwksMinRefreshSeconds, jwksAllowHttp, null, null, null, 30, true, false);
     }
 
+    /** For tests: the full configuration, with the settings of both token kinds. Can change in any release; applications use the settings. */
     public AuthConfig(boolean enabled, String resource, String issuer, String jwksUri, String audience, List<String> authorizationServers, List<String> scopesSupported, List<String> requiredScopes, long clockSkewSeconds, long jwksCacheSeconds, long jwksMinRefreshSeconds, boolean jwksAllowHttp, String introspectionUri, String introspectionClientId, String introspectionClientSecret, long introspectionCacheSeconds, boolean introspectionRequireAudience, boolean introspectionAllowHttp) {
         this.enabled         = enabled;
         this.introspectionCache           = Duration.ofSeconds(Math.max(0, introspectionCacheSeconds));
@@ -117,6 +120,7 @@ public class AuthConfig {
         return new AuthConfig(false, null, null, null, null, List.of(), List.of(), List.of(), 60, 300, 30, false);
     }
 
+    /** True if requests must carry a valid access token ({@code mcp.auth.enabled}). */
     public boolean enabled() {
         return enabled;
     }
@@ -131,10 +135,12 @@ public class AuthConfig {
         return resourcePath;
     }
 
+    /** The {@code iss} value that tokens must carry. */
     public String issuer() {
         return issuer;
     }
 
+    /** Where the issuer publishes its signing keys, or null when tokens are introspected. */
     public URI jwksUri() {
         return jwksUri;
     }
@@ -149,42 +155,52 @@ public class AuthConfig {
         return introspectionClientId;
     }
 
+    /** This server's client secret at the introspection endpoint, or null. */
     public String introspectionClientSecret() {
         return introspectionClientSecret;
     }
 
+    /** How long an introspection answer is reused; zero asks the endpoint for every request. */
     public Duration introspectionCache() {
         return introspectionCache;
     }
 
+    /** True if an introspection answer without {@code aud} is refused. */
     public boolean introspectionRequireAudience() {
         return introspectionRequireAudience;
     }
 
+    /** The {@code aud} value tokens must carry; the resource URI unless configured. */
     public String audience() {
         return audience;
     }
 
+    /** The authorization server issuers advertised to clients; the issuer unless configured. */
     public List<String> authorizationServers() {
         return authorizationServers;
     }
 
+    /** The scopes advertised in the metadata document. */
     public List<String> scopesSupported() {
         return scopesSupported;
     }
 
+    /** The scopes every request must carry. */
     public Set<String> requiredScopes() {
         return requiredScopes;
     }
 
+    /** The tolerance for the time claims ({@code exp}, {@code nbf}) of a token. */
     public Duration clockSkew() {
         return clockSkew;
     }
 
+    /** How long signing keys are kept before they are fetched again. */
     public Duration jwksCache() {
         return jwksCache;
     }
 
+    /** The shortest time between two refreshes of the signing keys, however many unknown key ids arrive. */
     public Duration jwksMinRefresh() {
         return jwksMinRefresh;
     }

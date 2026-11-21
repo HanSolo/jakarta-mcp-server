@@ -21,6 +21,7 @@ import java.util.Optional;
  */
 public record ToolCall(String name, JsonObject arguments, JsonObject clientCapabilities, JsonObject clientInfo, JsonObject inputResponses, String requestState, Caller caller, ProgressReporter progress, TraceContext trace) {
 
+    /** A missing progress reporter becomes {@link ProgressReporter#NONE} and a missing trace context {@link TraceContext#EMPTY}. */
     public ToolCall {
         progress = progress == null ? ProgressReporter.NONE : progress;
         trace    = trace == null ? TraceContext.EMPTY : trace;
@@ -67,6 +68,7 @@ public record ToolCall(String name, JsonObject arguments, JsonObject clientCapab
         return Elicitation.supports(clientCapabilities, mode);
     }
 
+    /** True if the client declared this capability on the request. */
     public boolean clientSupports(String capability) {
         return clientCapabilities.containsKey(capability);
     }

@@ -28,6 +28,7 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
             Meta.validate(meta, "tool result _meta");
         }
 
+        /** A result without {@code _meta}. Applications usually use {@link ToolResult#text}, {@link ToolResult#structured} or {@link ToolResult#error}. */
         public Complete(JsonArray content, JsonValue structuredContent, boolean isError) {
             this(content, structuredContent, isError, null);
         }
@@ -81,6 +82,7 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
             this(work, ttlMs, noExpiry, pollIntervalMs, false);
         }
 
+        /** The same task with this time to live in milliseconds, counted from its creation. */
         public Task withTtlMs(long ttlMs) {
             return new Task(work, ttlMs, false, pollIntervalMs, restartable);
         }
@@ -90,6 +92,7 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
             return new Task(work, null, true, pollIntervalMs, restartable);
         }
 
+        /** The same task with this suggested polling interval in milliseconds. */
         public Task withPollIntervalMs(long pollIntervalMs) {
             return new Task(work, ttlMs, noExpiry, pollIntervalMs, restartable);
         }
@@ -134,6 +137,7 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
             }
         }
 
+        /** The same task with this time to live in milliseconds, counted from its creation. */
         public ExternalTask withTtlMs(long ttlMs) {
             return new ExternalTask(start, ttlMs, false, pollIntervalMs);
         }
@@ -143,6 +147,7 @@ public sealed interface ToolResult permits ToolResult.Complete, ToolResult.Input
             return new ExternalTask(start, null, true, pollIntervalMs);
         }
 
+        /** The same task with this suggested polling interval in milliseconds. */
         public ExternalTask withPollIntervalMs(long pollIntervalMs) {
             return new ExternalTask(start, ttlMs, noExpiry, pollIntervalMs);
         }

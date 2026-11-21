@@ -5,6 +5,7 @@ import jakarta.json.JsonObject;
 /** The Tasks extension ({@code io.modelcontextprotocol/tasks}). */
 public final class Tasks {
 
+    /** The identifier of the Tasks extension. */
     public static final String EXTENSION_ID = "io.modelcontextprotocol/tasks";
 
 

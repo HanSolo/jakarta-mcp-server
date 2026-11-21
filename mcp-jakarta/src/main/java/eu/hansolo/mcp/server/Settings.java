@@ -24,6 +24,7 @@ public final class Settings {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    /** The setting as an integer, or the fallback if it is unset or not a number (a warning is logged for the latter). */
     public static int getInt(String property, int fallback) {
         String value = get(property);
         try {
@@ -34,6 +35,7 @@ public final class Settings {
         }
     }
 
+    /** The setting as a long, or the fallback if it is unset or not a number (a warning is logged for the latter). */
     public static long getLong(String property, long fallback) {
         String value = get(property);
         try {
@@ -44,6 +46,7 @@ public final class Settings {
         }
     }
 
+    /** The setting as a boolean, or the fallback if it is unset. Anything but {@code true} (ignoring case) is false. */
     public static boolean getBoolean(String property, boolean fallback) {
         String value = get(property);
         return value == null ? fallback : Boolean.parseBoolean(value);

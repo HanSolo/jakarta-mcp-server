@@ -10,10 +10,12 @@ public class ToolExecutionException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
 
+    /** A failure whose message the model sees, so that it can correct the call. */
     public ToolExecutionException(String message) {
         super(message);
     }
 
+    /** A failure whose message the model sees; the cause is for the log and is not sent. */
     public ToolExecutionException(String message, Throwable cause) {
         super(message, cause);
     }

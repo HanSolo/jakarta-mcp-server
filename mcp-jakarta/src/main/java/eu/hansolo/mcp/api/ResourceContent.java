@@ -25,15 +25,18 @@ public record ResourceContent(String uri, String mimeType, String text, String b
     }
 
 
+    /** Content without {@code _meta}. Exactly one of {@code text} and {@code blob} is set; applications usually use the static methods {@code text} or {@code blob}. */
     public ResourceContent(String uri, String mimeType, String text, String blob) {
         this(uri, mimeType, text, blob, null);
     }
 
 
+    /** Text content of the resource at this URI. */
     public static ResourceContent text(String uri, String mimeType, String text) {
         return new ResourceContent(uri, mimeType, text, null);
     }
 
+    /** Binary content of the resource at this URI; the bytes are base64 encoded here. */
     public static ResourceContent blob(String uri, String mimeType, byte[] data) {
         return new ResourceContent(uri, mimeType, null, Base64.getEncoder().encodeToString(data));
     }

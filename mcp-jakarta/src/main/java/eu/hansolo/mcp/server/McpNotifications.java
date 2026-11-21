@@ -61,6 +61,7 @@ public class McpNotifications {
     private volatile boolean                                shutdown;
 
 
+    /** Created by CDI. */
     @Inject
     public McpNotifications(McpConfig config, Instance<McpNotificationBridge> available) {
         this(config, () -> available);
@@ -84,11 +85,13 @@ public class McpNotifications {
         forward(McpChange.Kind.TOOLS_LIST_CHANGED, null);
     }
 
+    /** The prompt list changed; subscribed clients should call prompts/list again. */
     public void promptsListChanged() {
         promptsListChangedLocally();
         forward(McpChange.Kind.PROMPTS_LIST_CHANGED, null);
     }
 
+    /** The resource list changed; subscribed clients should call resources/list again. */
     public void resourcesListChanged() {
         resourcesListChangedLocally();
         forward(McpChange.Kind.RESOURCES_LIST_CHANGED, null);

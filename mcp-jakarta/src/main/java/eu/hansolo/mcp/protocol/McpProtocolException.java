@@ -18,6 +18,14 @@ public class McpProtocolException extends RuntimeException {
     private final transient JsonValue data;
 
 
+    /**
+     * A failure with an explicit HTTP status, JSON-RPC error code, message and optional data. Prefer the factory methods.
+     *
+     * @param httpStatus the HTTP status of the response
+     * @param code       the JSON-RPC error code, see {@link ErrorCodes}
+     * @param message    the message sent to the client
+     * @param data       optional error data, or null
+     */
     public McpProtocolException(int httpStatus, int code, String message, JsonValue data) {
         super(message);
         this.httpStatus = httpStatus;
@@ -26,10 +34,12 @@ public class McpProtocolException extends RuntimeException {
     }
 
 
+    /** The HTTP status the response carries. */
     public int httpStatus() {
         return httpStatus;
     }
 
+    /** The JSON-RPC error code. */
     public int code() {
         return code;
     }
@@ -39,10 +49,12 @@ public class McpProtocolException extends RuntimeException {
         return data;
     }
 
+    /** The body is not valid JSON (HTTP 400, -32700). */
     public static McpProtocolException parseError(String message) {
         return new McpProtocolException(400, ErrorCodes.PARSE_ERROR, message, null);
     }
 
+    /** The body is not a valid JSON-RPC request (HTTP 400, -32600). */
     public static McpProtocolException invalidRequest(String message) {
         return new McpProtocolException(400, ErrorCodes.INVALID_REQUEST, message, null);
     }
@@ -57,14 +69,17 @@ public class McpProtocolException extends RuntimeException {
         return new McpProtocolException(200, ErrorCodes.INVALID_PARAMS, message, null);
     }
 
+    /** The method is unknown (HTTP 404, -32601). */
     public static McpProtocolException methodNotFound(String method) {
         return new McpProtocolException(404, ErrorCodes.METHOD_NOT_FOUND, "Method not found: " + method, null);
     }
 
+    /** A header disagrees with the body (HTTP 400, -32020). */
     public static McpProtocolException headerMismatch(String message) {
         return new McpProtocolException(400, ErrorCodes.HEADER_MISMATCH, message, null);
     }
 
+    /** The requested protocol version is not supported (HTTP 400, -32022); the data lists the supported versions. */
     public static McpProtocolException unsupportedVersion(String requested) {
         JsonArrayBuilder supported = Json.createArrayBuilder();
         McpVersions.SUPPORTED.forEach(supported::add);
@@ -86,6 +101,7 @@ public class McpProtocolException extends RuntimeException {
         return new McpProtocolException(400, ErrorCodes.MISSING_REQUIRED_CLIENT_CAPABILITY, "Server requires the " + id + " extension for this request", data);
     }
 
+    /** An internal failure (HTTP 500, -32603). The message is sent to the client, so it must not reveal internals. */
     public static McpProtocolException internal(String message) {
         return new McpProtocolException(500, ErrorCodes.INTERNAL_ERROR, message, null);
     }

@@ -22,6 +22,7 @@ public record Caller(String subject, Set<String> scopes, JsonObject claims) {
     }
 
 
+    /** True if the caller's scopes satisfy this one, see {@link Scopes#satisfies}. */
     public boolean hasScope(String required) {
         return Scopes.satisfies(scopes, required);
     }

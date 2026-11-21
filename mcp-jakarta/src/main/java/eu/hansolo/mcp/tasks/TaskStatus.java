@@ -23,10 +23,12 @@ public enum TaskStatus {
         return wire;
     }
 
+    /** True once the status can no longer change. */
     public boolean isTerminal() {
         return this == COMPLETED || this == FAILED || this == CANCELLED;
     }
 
+    /** The status with this name in the protocol. */
     public static TaskStatus fromWire(String wire) {
         for (TaskStatus status : values()) {
             if (status.wire.equals(wire)) {

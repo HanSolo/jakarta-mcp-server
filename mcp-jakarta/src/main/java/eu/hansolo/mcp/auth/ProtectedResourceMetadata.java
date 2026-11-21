@@ -12,6 +12,7 @@ public final class ProtectedResourceMetadata {
     }
 
 
+    /** The RFC 9728 protected resource metadata document for this configuration. */
     public static JsonObject of(AuthConfig config) {
         JsonArrayBuilder servers = Json.createArrayBuilder();
         config.authorizationServers().forEach(servers::add);

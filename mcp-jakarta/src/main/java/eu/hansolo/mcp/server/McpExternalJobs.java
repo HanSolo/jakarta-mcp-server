@@ -28,6 +28,7 @@ public class McpExternalJobs {
     private final TaskService tasks;
 
 
+    /** Created by CDI. */
     @Inject
     public McpExternalJobs(TaskService tasks) {
         this.tasks = tasks;

@@ -14,10 +14,12 @@ public final class PromptScanner {
     }
 
 
+    /** True if the class declares prompt methods. */
     public static boolean hasPrompts(Class<?> beanClass) {
         return MethodFinder.hasAnnotated(beanClass, McpPrompt.class);
     }
 
+    /** The prompt handlers of the annotated methods of the class; each call uses the bean the source supplies. */
     public static List<McpPromptHandler> scan(Class<?> beanClass, BeanSource source) {
         List<McpPromptHandler> handlers = new ArrayList<>();
         for (Method method : MethodFinder.annotated(beanClass, McpPrompt.class)) {

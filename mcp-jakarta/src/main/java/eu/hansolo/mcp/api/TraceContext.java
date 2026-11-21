@@ -64,6 +64,7 @@ public record TraceContext(String traceparent, String tracestate, String baggage
     }
 
 
+    /** True if the client sent no trace context. */
     public boolean isEmpty() {
         return traceparent == null && tracestate == null && baggage == null;
     }

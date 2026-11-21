@@ -14,10 +14,12 @@ public final class CompletionScanner {
     }
 
 
+    /** True if the class declares completion methods. */
     public static boolean hasCompletions(Class<?> beanClass) {
         return MethodFinder.hasAnnotated(beanClass, McpComplete.class);
     }
 
+    /** The completion handlers of the annotated methods of the class; each call uses the bean the source supplies. */
     public static List<McpCompletionHandler> scan(Class<?> beanClass, BeanSource source) {
         List<McpCompletionHandler> handlers = new ArrayList<>();
         for (Method method : MethodFinder.annotated(beanClass, McpComplete.class)) {

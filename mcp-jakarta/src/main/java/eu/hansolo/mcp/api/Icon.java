@@ -49,10 +49,12 @@ public record Icon(String src, String mimeType, List<String> sizes, String theme
         return new Icon(src, null, null, null);
     }
 
+    /** An icon from this source (an https or data URI) and MIME type. */
     public static Icon of(String src, String mimeType) {
         return new Icon(src, mimeType, null, null);
     }
 
+    /** The icon as the JSON object of the protocol. */
     public JsonObject toJson() {
         JsonObjectBuilder icon = Json.createObjectBuilder().add("src", src);
         if (mimeType != null) {

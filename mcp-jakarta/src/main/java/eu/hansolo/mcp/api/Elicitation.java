@@ -130,18 +130,22 @@ public final class Elicitation {
     /** The user's answer. {@code content} is empty unless the user accepted a form. */
     public record Answer(Action action, JsonObject content) {
 
+        /** True if the user accepted (and, for a form, sent content). */
         public boolean accepted() {
             return action == Action.ACCEPT;
         }
 
+        /** True if the user declined. */
         public boolean declined() {
             return action == Action.DECLINE;
         }
 
+        /** True if the user cancelled, or answered with an action this library does not know. */
         public boolean cancelled() {
             return action == Action.CANCEL;
         }
 
+        /** A text value; empty if absent or not a string. */
         public Optional<String> string(String name) {
             return content.get(name) instanceof JsonString s ? Optional.of(s.getString()) : Optional.empty();
         }
@@ -151,10 +155,12 @@ public final class Elicitation {
             return content.get(name) instanceof JsonNumber n && n.isIntegral() ? Optional.of(n.longValue()) : Optional.empty();
         }
 
+        /** A decimal value; empty if absent or not a number. */
         public Optional<Double> number(String name) {
             return content.get(name) instanceof JsonNumber n ? Optional.of(n.doubleValue()) : Optional.empty();
         }
 
+        /** A yes/no value; empty if absent or not a boolean. */
         public Optional<Boolean> bool(String name) {
             return content.get(name) == JsonValue.TRUE ? Optional.of(true) : content.get(name) == JsonValue.FALSE ? Optional.of(false) : Optional.empty();
         }
@@ -201,6 +207,7 @@ public final class Elicitation {
         }
 
 
+        /** The request as sent to the client: {@code method} and {@code params} with {@code mode} "url". */
         @Override
         public JsonObject toJson() {
             return request(Json.createObjectBuilder().add("mode", "url").add("message", message).add("url", url));
@@ -230,6 +237,7 @@ public final class Elicitation {
             return add(name, new Property(Kind.STRING, null), settings);
         }
 
+        /** A text property without further settings. */
         public Form string(String name) {
             return string(name, p -> { });
         }
@@ -268,6 +276,7 @@ public final class Elicitation {
             return multiChoice(name, plain, settings);
         }
 
+        /** Any number of these values; the map's values are the titles shown to the user (null for none), the keys are what comes back. */
         public Form multiChoice(String name, Map<String, String> valuesWithTitles, Consumer<Property> settings) {
             return add(name, new Property(Kind.MULTI, copyChoices(name, valuesWithTitles)), settings);
         }
@@ -290,6 +299,7 @@ public final class Elicitation {
             return schema.build();
         }
 
+        /** The request as sent to the client: {@code method} and {@code params} with {@code mode} "form" and the {@code requestedSchema}. */
         @Override
         public JsonObject toJson() {
             return request(Json.createObjectBuilder().add("mode", "form").add("message", message).add("requestedSchema", schema()));
@@ -377,11 +387,13 @@ public final class Elicitation {
             return this;
         }
 
+        /** The label the user sees. */
         public Property title(String title) {
             this.title = title;
             return this;
         }
 
+        /** A help text under the field. Title and description are checked for words that ask for secrets, as the message is. */
         public Property description(String description) {
             this.description = description;
             return this;

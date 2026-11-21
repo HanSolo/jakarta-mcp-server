@@ -35,6 +35,7 @@ public record ResourceCall(String uri, Map<String, String> variables, JsonObject
         return Elicitation.supports(clientCapabilities, mode);
     }
 
+    /** True if the client declared this capability on the request. */
     public boolean clientSupports(String capability) {
         return clientCapabilities.containsKey(capability);
     }
@@ -49,6 +50,7 @@ public record ResourceCall(String uri, Map<String, String> variables, JsonObject
         Extensions.require(clientCapabilities, id);
     }
 
+    /** The value of this variable of the URI template, if the URI had it. */
     public Optional<String> variable(String name) {
         return Optional.ofNullable(variables.get(name));
     }

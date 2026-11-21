@@ -24,14 +24,17 @@ public record CompletionResult(List<String> values, Long total, Boolean hasMore)
     }
 
 
+    /** A result with these suggestions. */
     public static CompletionResult of(List<String> values) {
         return new CompletionResult(values, null, null);
     }
 
+    /** A result with these suggestions. */
     public static CompletionResult of(String... values) {
         return new CompletionResult(List.of(values), null, null);
     }
 
+    /** A result without suggestions. */
     public static CompletionResult empty() {
         return new CompletionResult(List.of(), 0L, false);
     }

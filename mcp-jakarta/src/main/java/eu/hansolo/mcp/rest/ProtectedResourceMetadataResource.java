@@ -24,6 +24,7 @@ public class ProtectedResourceMetadataResource {
     private AuthConfig config;
 
 
+    /** The metadata document, or 404 when authentication is off or the suffix is not the resource path. */
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     public Response get(@PathParam("suffix") String suffix) {

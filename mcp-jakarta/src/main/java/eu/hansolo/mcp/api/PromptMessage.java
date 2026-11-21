@@ -21,10 +21,12 @@ public record PromptMessage(String role, JsonObject content) {
     }
 
 
+    /** A message from the user role with this text. */
     public static PromptMessage user(String text) {
         return new PromptMessage("user", textBlock(text));
     }
 
+    /** A message from the assistant role with this text. */
     public static PromptMessage assistant(String text) {
         return new PromptMessage("assistant", textBlock(text));
     }
@@ -34,10 +36,12 @@ public record PromptMessage(String role, JsonObject content) {
         return new PromptMessage("user", content);
     }
 
+    /** The content block of a text message. */
     public static JsonObject textBlock(String text) {
         return Json.createObjectBuilder().add("type", "text").add("text", text).build();
     }
 
+    /** The content block of an embedded resource. */
     public static JsonObject embeddedResource(ResourceContent content) {
         return Content.resource(content);
     }

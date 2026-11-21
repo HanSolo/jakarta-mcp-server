@@ -24,6 +24,7 @@ public enum TaskSupport {
         this.wire = wire;
     }
 
+    /** The value in the tool definition on the wire. */
     public String wire() {
         return wire;
     }

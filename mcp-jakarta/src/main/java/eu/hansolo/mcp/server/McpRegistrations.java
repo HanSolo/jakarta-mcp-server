@@ -45,6 +45,7 @@ public class McpRegistrations {
     private final AuthConfig       auth;
 
 
+    /** Created by CDI. */
     @Inject
     public McpRegistrations(McpRegistry registry, McpNotifications notifications, AuthConfig auth) {
         this.registry      = registry;

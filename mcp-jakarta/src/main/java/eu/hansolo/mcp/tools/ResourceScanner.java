@@ -15,6 +15,7 @@ public final class ResourceScanner {
     }
 
 
+    /** True if the class declares resource methods. */
     public static boolean hasResources(Class<?> beanClass) {
         return MethodFinder.hasAnnotated(beanClass, McpResource.class);
     }

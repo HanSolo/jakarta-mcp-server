@@ -42,6 +42,7 @@ public class McpRequestStates {
     private final long          ttlMs;
 
 
+    /** Created by CDI; the key and lifetime come from the {@code mcp.request-state.*} settings. */
     @Inject
     public McpRequestStates(McpConfig config) {
         this(config.requestStateSecret(), config.requestStateTtlMs());
@@ -61,6 +62,7 @@ public class McpRequestStates {
     }
 
 
+    /** Signs the payload without a context; see {@link #sign(String, String)}. */
     public String sign(String payload) {
         return sign(payload, "");
     }
@@ -75,6 +77,7 @@ public class McpRequestStates {
         return body + "." + ENCODER.encodeToString(mac(body, context));
     }
 
+    /** Verifies a state signed without a context; see {@link #verify(String, String)}. */
     public Optional<String> verify(String state) {
         return verify(state, "");
     }
@@ -102,6 +105,7 @@ public class McpRequestStates {
         }
     }
 
+    /** Like {@link #verify(String)} but fails the request; see {@link #require(String, String)}. */
     public String require(String state) {
         return require(state, "");
     }

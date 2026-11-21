@@ -6,6 +6,12 @@ package eu.hansolo.mcp.api;
  */
 public class RequestCancelledException extends RuntimeException {
 
+    /**
+     * The request was cancelled.
+     *
+     * @param message what was cancelled
+     * @param cause   the interruption or failure that ended it, or null
+     */
     public RequestCancelledException(String message, Throwable cause) {
         super(message, cause);
     }

@@ -4,11 +4,15 @@
 ## Unreleased
 
 ### Added
+- **README: "Coming from REST and JSON-B":** what to use in a tool instead of `java.time` types, `UUID`, entities, `Response` and exceptions, with a worked example that calls the service behind a REST endpoint.
+- **`docs/design/backlog-post-1.0.md`:** the backlog after 1.0.0 (Jakarta EE conveniences such as `java.time`, POJOs, exception mapping and Bean Validation; compatibility, spec tracking, production readiness, project hygiene).
+- **`CONTRIBUTING.md`, `SECURITY.md` and `docs/release-checklist.md`.**
 - **`InterceptorsIT` and fixture classes (`Audited`, `AuditInterceptor`, `AuditedTool`, `AuditedHandlerTool`, `CallLog`, `GET`/`DELETE /admin/calls`):** show that audit, a policy gate and a rate limit can be built around tools with a plain CDI interceptor, for `@McpTool` methods and for `McpToolHandler` beans, without a hook from the library. Passed on Payara, WildFly and Open Liberty in CI.
 - **Design note `docs/design/api-review-1.0.0.md`:** which classes 1.0.0 freezes, which are internal or provisional, and why.
 - **README:** a section "Adding the library to your own application" (dependency, `-parameters`, registering the endpoint with `getClasses()`, what a failed tool declaration does, `tools/list` with curl); a note on `java.time` types and `List` returns; the confirmation form and the sensitive-text pitfall under "Elicitation"; "Audit, policy gates and rate limits" under "Writing tools"; "Rate limiting" under "Non-goals" (a gateway or a JAX-RS filter does it, not the library).
 
 ### Changed
+- Javadoc for the public declarations of the frozen packages (`api`, `protocol`, `auth`, `rest`, `tasks`, the seven stable `server` classes and the scanners): constants, factory methods, getters, builders and constructors that had no comment. No code changed.
 - `ToolScanner.scan`, `PromptScanner.scan`, `CompletionScanner.scan` and `ResourceScanner.scan` return the interfaces (`List<McpToolHandler>`, `List<McpPromptHandler>`, `List<McpCompletionHandler>`, and `Found(List<McpResourceHandler>, List<McpResourceTemplateHandler>)`) instead of the `Annotated*Handler` classes. Code that only uses the interface methods compiles unchanged; a variable declared with the old class type needs the interface.
 - Javadoc: the `Annotated*Handler` classes, `CdiAnnotationScanner`, `SchemaGenerator`, `JsonConverter`, `JsonMapper`, `ResultMapper`, `BearerJwtAuthenticator`, `JwtVerifier`, `JwksKeyResolver`, `IntrospectionVerifier`, `ListenExecutor` and `McpHttpResponse` are marked internal; `TaskStore` and `TaskRecord` provisional; the sealed result types document that a variant can be added. No code change.
 - README "Stable API and internals" lists what 1.0.0 freezes per package, the provisional SPI, the sealed types, the rule for adding record components, and what the protocol promise is (one specification version per release line).

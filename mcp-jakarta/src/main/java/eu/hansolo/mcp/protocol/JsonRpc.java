@@ -12,6 +12,7 @@ public final class JsonRpc {
     }
 
 
+    /** A success response for the request with this id. */
     public static JsonObject result(JsonValue id, JsonObject result) {
         return Json.createObjectBuilder().add("jsonrpc", "2.0").add("id", id).add("result", result).build();
     }

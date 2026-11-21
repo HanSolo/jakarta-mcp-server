@@ -25,6 +25,7 @@ public record PromptCall(String name, Map<String, String> arguments, JsonObject 
     }
 
 
+    /** The value of this argument, if the client sent it. */
     public Optional<String> argument(String key) {
         return Optional.ofNullable(arguments.get(key));
     }
@@ -34,6 +35,7 @@ public record PromptCall(String name, Map<String, String> arguments, JsonObject 
         return Elicitation.supports(clientCapabilities, mode);
     }
 
+    /** True if the client declared this capability on the request. */
     public boolean clientSupports(String capability) {
         return clientCapabilities.containsKey(capability);
     }

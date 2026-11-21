@@ -6,6 +6,7 @@ public class TokenException extends Exception {
     private static final long serialVersionUID = 1L;
 
 
+    /** A token that is not acceptable; the message says why. */
     public TokenException(String message) {
         super(message);
     }

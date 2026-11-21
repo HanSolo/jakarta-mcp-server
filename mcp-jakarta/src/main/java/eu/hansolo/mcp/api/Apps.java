@@ -41,8 +41,11 @@ import java.util.regex.Pattern;
  */
 public final class Apps {
 
+    /** The identifier of the MCP Apps extension. */
     public static final String EXTENSION_ID = "io.modelcontextprotocol/ui";
+    /** The MIME type of a page the client can render. */
     public static final String MIME_TYPE    = "text/html;profile=mcp-app";
+    /** The scheme prefix of the resources that hold pages. */
     public static final String URI_PREFIX   = "ui://";
 
     private static final Set<String> VISIBILITY  = Set.of("model", "app");
@@ -60,6 +63,7 @@ public final class Apps {
         return settings.isPresent() && settings.get().get("mimeTypes") instanceof JsonArray types && types.stream().anyMatch(t -> t instanceof JsonString s && MIME_TYPE.equals(s.getString()));
     }
 
+    /** True for a {@code ui://} URI with something after the prefix. */
     public static boolean isUiUri(String uri) {
         return uri != null && uri.startsWith(URI_PREFIX) && uri.length() > URI_PREFIX.length();
     }
@@ -129,6 +133,7 @@ public final class Apps {
         return ResourceContent.text(uri, MIME_TYPE, html).withMeta(meta);
     }
 
+    /** A builder for the {@code _meta.ui} of a page, see {@link ResourceMeta}. */
     public static ResourceMeta resourceMeta() {
         return new ResourceMeta();
     }
@@ -159,10 +164,12 @@ public final class Apps {
             return origins("resourceDomains", origins);
         }
 
+        /** Origins the page may embed in frames ({@code frame-src}). None by default. */
         public ResourceMeta frameDomains(String... origins) {
             return origins("frameDomains", origins);
         }
 
+        /** Origins allowed as the page's base URI ({@code base-uri}). None by default. */
         public ResourceMeta baseUriDomains(String... origins) {
             return origins("baseUriDomains", origins);
         }
@@ -186,11 +193,13 @@ public final class Apps {
             return this;
         }
 
+        /** Whether the client should draw a border around the page; unset leaves the choice to the client. */
         public ResourceMeta prefersBorder(boolean prefersBorder) {
             this.prefersBorder = prefersBorder;
             return this;
         }
 
+        /** The {@code _meta} object, holding the {@code ui} entry. */
         public JsonObject build() {
             JsonObjectBuilder ui = Json.createObjectBuilder();
             if (hasCsp) {

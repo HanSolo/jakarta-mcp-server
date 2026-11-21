@@ -28,10 +28,12 @@ public final class Content {
     }
 
 
+    /** A text block. */
     public static JsonObject text(String text) {
         return Json.createObjectBuilder().add("type", "text").add("text", Objects.requireNonNull(text, "text")).build();
     }
 
+    /** A text block with annotations (audience, priority, last modified). */
     public static JsonObject text(String text, Annotations annotations) {
         return with(Json.createObjectBuilder().add("type", "text").add("text", Objects.requireNonNull(text, "text")), annotations, null);
     }
@@ -46,6 +48,7 @@ public final class Content {
         return media("image", base64, mimeType, null, null);
     }
 
+    /** An image block with annotations and {@code _meta}; either may be null. The bytes are base64 encoded here. */
     public static JsonObject image(byte[] data, String mimeType, Annotations annotations, JsonObject meta) {
         return media("image", Base64.getEncoder().encodeToString(data), mimeType, annotations, meta);
     }
@@ -55,10 +58,12 @@ public final class Content {
         return media("audio", Base64.getEncoder().encodeToString(data), mimeType, null, null);
     }
 
+    /** An audio block from data that is already base64. */
     public static JsonObject audioBase64(String base64, String mimeType) {
         return media("audio", base64, mimeType, null, null);
     }
 
+    /** An audio block with annotations and {@code _meta}; either may be null. The bytes are base64 encoded here. */
     public static JsonObject audio(byte[] data, String mimeType, Annotations annotations, JsonObject meta) {
         return media("audio", Base64.getEncoder().encodeToString(data), mimeType, annotations, meta);
     }
@@ -68,6 +73,7 @@ public final class Content {
         return resource(content, null, null);
     }
 
+    /** An embedded resource block with annotations and {@code _meta}; either may be null. */
     public static JsonObject resource(ResourceContent content, Annotations annotations, JsonObject meta) {
         return with(Json.createObjectBuilder().add("type", "resource").add("resource", content.toJson()), annotations, meta);
     }
@@ -132,18 +138,22 @@ public final class Content {
             }
         }
 
+        /** Annotations for these audiences ({@code "user"}, {@code "assistant"}), without priority or modification time. */
         public static Annotations forAudience(String... roles) {
             return new Annotations(List.of(roles), null, null);
         }
 
+        /** A copy with this priority, 0 (optional) to 1 (effectively required). */
         public Annotations withPriority(double priority) {
             return new Annotations(audience, priority, lastModified);
         }
 
+        /** A copy with this modification time. */
         public Annotations withLastModified(Instant lastModified) {
             return new Annotations(audience, priority, lastModified);
         }
 
+        /** The annotations as the JSON object of the protocol; empty parts are omitted. */
         public JsonObject toJson() {
             JsonObjectBuilder json = Json.createObjectBuilder();
             if (!audience.isEmpty()) {
@@ -185,16 +195,19 @@ public final class Content {
         }
 
 
+        /** A human readable title. */
         public Link title(String title) {
             this.title = title;
             return this;
         }
 
+        /** What the resource contains. */
         public Link description(String description) {
             this.description = description;
             return this;
         }
 
+        /** The MIME type of the resource, if known. */
         public Link mimeType(String mimeType) {
             this.mimeType = mimeType;
             return this;
@@ -209,21 +222,25 @@ public final class Content {
             return this;
         }
 
+        /** Icons for the link. */
         public Link icons(List<Icon> icons) {
             this.icons = List.copyOf(icons);
             return this;
         }
 
+        /** Annotations for the block. */
         public Link annotations(Annotations annotations) {
             this.annotations = annotations;
             return this;
         }
 
+        /** The {@code _meta} of the block; keys are validated. */
         public Link meta(JsonObject meta) {
             this.meta = meta;
             return this;
         }
 
+        /** The finished {@code resource_link} block. */
         public JsonObject build() {
             JsonObjectBuilder block = Json.createObjectBuilder().add("type", "resource_link").add("uri", uri).add("name", name);
             if (title != null) {

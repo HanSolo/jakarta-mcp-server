@@ -49,6 +49,7 @@ public class McpResource {
     private ListenExecutor listeners;
 
 
+    /** Receives every MCP request (Streamable HTTP POST) and answers it as one JSON response or, for streamed calls, as an event stream. */
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     public void post(@Context HttpHeaders headers, @Context HttpServletRequest request, @Context HttpServletResponse servlet, @Suspended AsyncResponse async, InputStream body) {
