@@ -328,7 +328,7 @@ A tool is not a REST resource: its parameters and results are JSON described by 
 | A POJO or DTO with getters | Return it: the properties are its getters and public fields (see "Beans as results"). Parameters are still records |
 | A JPA entity | A `record` or a DTO with the fields the model needs, filled by your code. A lazy-loading proxy and a bean that contains itself are refused with a message, and a getter that loads a collection loads it |
 | A `List` as the result | Works (the result is text containing the JSON array); to get structured content and an `outputSchema`, return a record that holds the list |
-| A `jakarta.ws.rs.core.Response` | Return its entity, and throw `ToolExecutionException` for an error status |
+| A `jakarta.ws.rs.core.Response` | Return it as it is: a status below 400 gives its entity as the result (no entity: an empty result); a 4xx status is an error whose message is the entity text (or `HTTP 404 Not Found` without one); a 5xx status is the generic error, with the entity only in the log. Status codes only decide success or error: headers, cookies and links are ignored |
 | `NotFoundException` and other exceptions | A `NotFoundException` (any JAX-RS exception with a 4xx status) and a `ConstraintViolationException` show their message to the model. For your own exceptions write a `ToolExceptionMapper` bean (see "When a tool throws"), or throw `ToolExecutionException("Ticket 42 does not exist")`. Any other exception is logged and replaced by a generic message, so the model cannot learn from it |
 | Bean Validation (`@NotBlank`, `@Size`, `@Min`, `@Pattern`, ...) | Put the annotations on the tool parameters and on record components: they go into the schema and are checked before the tool runs (see "Bean Validation"). The ones that JSON Schema cannot express are checked by your container if it validates CDI beans, and its `ConstraintViolationException` message reaches the model |
 | `@RolesAllowed` | Not evaluated. Use `@McpTool(scopes = ...)` with OAuth, or check `Caller` in the method |
@@ -492,7 +492,7 @@ The profile published 0.1.0. Check the `central-publishing-maven-plugin` version
 
 ## Configuration
 
-Each setting is a system property, or the same name upper-cased with `.` and `-` turned into `_` as an environment variable.
+Each setting is a system property, or the same name upper-cased with `.` and `-` turned into `_` as an environment variable. If the application has MicroProfile Config (Payara, Open Liberty and WildFly provide it), a setting that is not found in those two places is read from it, so it can come from `META-INF/microprofile-config.properties`, a ConfigMap or whatever source the server offers. The order is: system property, environment variable, MicroProfile Config, default. The library finds MicroProfile Config by name and does not depend on it; without the API on the class path nothing changes.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
