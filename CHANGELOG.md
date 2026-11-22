@@ -1,7 +1,7 @@
 # Changelog
 
 
-## Unreleased
+## 1.1.0 (2026-11-22)
 
 ### Added
 - **`jakarta.ws.rs.core.Response` as a tool result:** a status below 400 gives the entity as the result (no entity: an empty result); a 4xx status is an error result with the entity text as the message (or `HTTP 404 Not Found`); a 5xx status is `Tool execution failed`, with a warning in the log. JAX-RS is found by name, so it stays optional. README "Coming from REST and JSON-B" updated; `ResponseReturnIT` with the fixture `ResponseTools`.
