@@ -90,6 +90,10 @@ public class McpRequestHandler {
     private final McpExtensions    extensions;
     private final TaskService      tasks;
 
+    /** What the model is told when a tool throws; set by CDI, and without CDI only the library's own rules apply. */
+    @Inject
+    ToolFailures failures = ToolFailures.none();
+
 
     @Inject
     public McpRequestHandler(McpRegistry registry, McpConfig config, AuthConfig authConfig, McpAuthenticator authenticator, McpNotifications notifications, McpExtensions extensions, TaskService tasks) {
@@ -1024,8 +1028,8 @@ public class McpRequestHandler {
     private JsonObject invokeTool(PreparedTool prepared, ProgressReporter progress) {
         RequestContext context = prepared.context();
         ToolResult outcome;
+        ToolCall call = new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress, context.trace());
         try {
-            ToolCall call = new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress, context.trace());
             outcome = prepared.tool().call(call);
             if (outcome instanceof ToolResult.ExternalTask external) {
                 if (!tasks.enabled() || !Tasks.clientSupports(context.clientCapabilities())) {
@@ -1042,8 +1046,7 @@ public class McpRequestHandler {
         } catch (McpProtocolException | RequestCancelledException e) {
             throw e;
         } catch (Exception e) {
-            LOG.log(Level.WARNING, "Tool '" + prepared.name() + "' failed", e);
-            outcome = ToolResult.error("Tool execution failed");
+            outcome = ToolResult.error(failures.message(e, call));
         }
         if (outcome == null) {
             LOG.warning("Tool '" + prepared.name() + "' returned null");

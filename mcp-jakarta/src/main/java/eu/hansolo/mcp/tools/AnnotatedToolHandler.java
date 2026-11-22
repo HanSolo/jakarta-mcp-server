@@ -142,9 +142,9 @@ public final class AnnotatedToolHandler implements McpToolHandler {
         for (Parameter parameter : method.getParameters()) {
             Type type = parameter.getParameterizedType();
             if (parameter.getType() == ToolCall.class) {
-                result.add(new Binding(Kind.CALL, null, type, false, "", ""));
+                result.add(new Binding(Kind.CALL, null, type, false, "", "", null));
             } else if (parameter.getType() == Caller.class) {
-                result.add(new Binding(Kind.CALLER, null, type, false, "", ""));
+                result.add(new Binding(Kind.CALLER, null, type, false, "", "", null));
             } else {
                 McpParam info = parameter.getAnnotation(McpParam.class);
                 String parameterName = info != null && !info.name().isEmpty() ? info.name() : parameter.getName();
@@ -157,7 +157,7 @@ public final class AnnotatedToolHandler implements McpToolHandler {
                     throw new IllegalStateException(where + ": duplicate parameter name '" + parameterName + "'");
                 }
                 try {
-                    result.add(new Binding(Kind.ARGUMENT, parameterName, type, SchemaGenerator.isRequired(type, info), info == null ? "" : info.description(), info == null ? "" : info.header()));
+                    result.add(new Binding(Kind.ARGUMENT, parameterName, type, SchemaGenerator.isRequired(type, info), info == null ? "" : info.description(), info == null ? "" : info.header(), parameter));
                 } catch (IllegalStateException e) {
                     throw new IllegalStateException(where + ", parameter '" + parameterName + "': " + e.getMessage(), e);
                 }
@@ -176,7 +176,8 @@ public final class AnnotatedToolHandler implements McpToolHandler {
                 continue;
             }
             try {
-                properties.add(binding.name(), SchemaGenerator.withHeader(SchemaGenerator.withDescription(SchemaGenerator.schemaFor(binding.type(), defs), binding.description()), binding.header()));
+                JsonObject constrained = Constraints.apply(SchemaGenerator.schemaFor(binding.type(), defs), binding.declaration().getAnnotations(), binding.declaration().getAnnotatedType());
+                properties.add(binding.name(), SchemaGenerator.withHeader(SchemaGenerator.withDescription(constrained, binding.description()), binding.header()));
             } catch (IllegalStateException e) {
                 throw new IllegalStateException(where + ", parameter '" + binding.name() + "': " + e.getMessage(), e);
             }
@@ -218,6 +219,6 @@ public final class AnnotatedToolHandler implements McpToolHandler {
     }
 
 
-    private record Binding(Kind kind, String name, Type type, boolean required, String description, String header) {
+    private record Binding(Kind kind, String name, Type type, boolean required, String description, String header, Parameter declaration) {
     }
 }

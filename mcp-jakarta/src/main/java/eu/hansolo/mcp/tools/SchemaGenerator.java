@@ -64,6 +64,10 @@ public final class SchemaGenerator {
         if (raw == String.class) {
             return object("string");
         }
+        JsonObject value = ValueTypes.schema(raw);
+        if (value != null) {
+            return value;
+        }
         if (raw == boolean.class || raw == Boolean.class) {
             return object("boolean");
         }
@@ -106,7 +110,7 @@ public final class SchemaGenerator {
         if (raw.isRecord()) {
             return recordSchema(raw, defs);
         }
-        throw unsupported(type, "supported are scalars, enums, List/Set/Collection/arrays, Map<String,V>, records, Optional and the JSON-P types");
+        throw unsupported(type, "supported are scalars, enums, java.time dates and times, UUID, URI, Locale, Currency, List/Set/Collection/arrays, Map<String,V>, records, Optional and the JSON-P types");
     }
 
     private static JsonObject recordSchema(Class<?> record, Defs defs) {
@@ -128,7 +132,8 @@ public final class SchemaGenerator {
         for (RecordComponent component : record.getRecordComponents()) {
             McpParam info = component.getAnnotation(McpParam.class);
             String name = info != null && !info.name().isEmpty() ? info.name() : component.getName();
-            properties.add(name, withHeader(withDescription(schema(component.getGenericType(), defs), info == null ? "" : info.description()), info == null ? "" : info.header()));
+            JsonObject constrained = Constraints.apply(schema(component.getGenericType(), defs), component.getAnnotations(), component.getAnnotatedType());
+            properties.add(name, withHeader(withDescription(constrained, info == null ? "" : info.description()), info == null ? "" : info.header()));
             if (isRequired(component.getGenericType(), info)) {
                 required.add(name);
                 anyRequired = true;

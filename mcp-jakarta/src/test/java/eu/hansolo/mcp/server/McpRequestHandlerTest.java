@@ -5,6 +5,7 @@ import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
 import eu.hansolo.mcp.api.McpToolHandler;
 import eu.hansolo.mcp.api.ToolCall;
+import eu.hansolo.mcp.api.ToolExceptionMapper;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.protocol.ErrorCodes;
 import eu.hansolo.mcp.protocol.McpProtocolException;
@@ -16,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -221,6 +223,14 @@ class McpRequestHandlerTest {
         String text = result.getJsonArray("content").getJsonObject(0).getString("text");
         assertEquals("Tool execution failed", text);
         assertFalse(response.body().contains("secret detail"));
+    }
+
+    @Test
+    void aMapperChoosesTheMessageForAFailedTool() {
+        handler.failures = new ToolFailures(List.of((failure, call) -> failure instanceof IllegalStateException ? Optional.of("Mapped: " + call.name()) : Optional.empty()));
+        JsonObject result = json(call("boom", null)).getJsonObject("result");
+        assertTrue(result.getBoolean("isError"));
+        assertEquals("Mapped: boom", result.getJsonArray("content").getJsonObject(0).getString("text"));
     }
 
     @Test

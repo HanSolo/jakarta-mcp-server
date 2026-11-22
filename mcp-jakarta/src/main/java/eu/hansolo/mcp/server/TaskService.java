@@ -102,6 +102,9 @@ public class TaskService {
     private final java.util.List<ExternalJob> givenJobs;
     @Inject
     Instance<ExternalJob>                  discoveredJobs;
+    /** What the model is told when the work of a task throws; set by CDI. */
+    @Inject
+    ToolFailures                           failures = ToolFailures.none();
     private ExecutorService                ownedExecutor;
     private ScheduledExecutorService       scheduler;
     private final java.util.List<java.util.function.Consumer<String>> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -321,8 +324,7 @@ public class TaskService {
                 finish(worker, rec -> rec.edit(clock.instant(), edit -> edit.status(TaskStatus.FAILED).error(error(e.code(), e.getMessage()))));
                 return;
             } catch (Exception e) {
-                LOG.log(Level.WARNING, "The work of task " + abbreviate(id) + " (tool '" + call.name() + "') failed", e);
-                outcome = ToolResult.error("Tool execution failed");
+                outcome = ToolResult.error(failures.message(e, call));
             }
             if (!(outcome instanceof ToolResult.Complete complete)) {
                 LOG.warning("Tool '" + call.name() + "': the work of a task must end with a complete result");

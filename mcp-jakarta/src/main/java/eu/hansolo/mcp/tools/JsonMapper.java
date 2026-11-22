@@ -67,6 +67,9 @@ public final class JsonMapper {
         if (value instanceof Enum<?> constant) {
             return Json.createValue(constant.name());
         }
+        if (ValueTypes.isValue(value)) {
+            return Json.createValue(ValueTypes.format(value));
+        }
         if (value instanceof Optional<?> optional) {
             return optional.isPresent() ? toJson(optional.get(), depth + 1) : JsonValue.NULL;
         }
@@ -92,7 +95,7 @@ public final class JsonMapper {
         if (value.getClass().isRecord()) {
             return record(value, depth);
         }
-        throw new IllegalStateException("Cannot convert " + value.getClass().getName() + " to JSON: return a String, a number, a record, a Map, a collection, or a JSON-P value");
+        throw new IllegalStateException("Cannot convert " + value.getClass().getName() + " to JSON: return a String, a number, a java.time value, a UUID, a record, a Map, a collection, or a JSON-P value");
     }
 
     /** A whole {@code double} is written without a fraction ({@code 5}, not {@code 5.0}); a {@code float} keeps the digits it prints with ({@code 0.1}, not {@code 0.10000000149011612}). */

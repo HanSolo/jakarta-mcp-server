@@ -25,6 +25,9 @@ public final class ResultMapper {
         if (value == null) {
             return new ToolResult.Complete(Json.createArrayBuilder().build(), null, false);
         }
+        if (ValueTypes.isValue(value)) {
+            return ToolResult.text(ValueTypes.format(value));
+        }
         if (value instanceof CharSequence || value instanceof Number || value instanceof Boolean || value instanceof Enum<?>) {
             return ToolResult.text(value instanceof Enum<?> constant ? constant.name() : value.toString());
         }

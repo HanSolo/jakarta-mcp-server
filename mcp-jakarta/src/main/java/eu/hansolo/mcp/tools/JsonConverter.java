@@ -71,6 +71,14 @@ public final class JsonConverter {
         if (raw == String.class) {
             return string(value, path);
         }
+        if (ValueTypes.supports(raw)) {
+            String text = string(value, path);
+            try {
+                return ValueTypes.parse(text, raw);
+            } catch (IllegalArgumentException e) {
+                throw bad(path, "must be " + ValueTypes.expected(raw));
+            }
+        }
         if (raw == boolean.class || raw == Boolean.class) {
             if (value == JsonValue.TRUE || value == JsonValue.FALSE) {
                 return value == JsonValue.TRUE;

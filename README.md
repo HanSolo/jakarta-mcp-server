@@ -215,30 +215,101 @@ public class Calculator {
 
 | Aspect | Supported |
 | --- | --- |
-| Parameters | `String`, booleans, integer and floating types and wrappers, `BigInteger`, `BigDecimal`, enums, `List`/`Set`/`Collection`/arrays, `Map<String,V>`, records (nested objects; a record that refers to itself, directly or through other records, collections or `Optional`, is described with `$defs`/`$ref`, see Argument validation), `JsonObject`/`JsonArray`/`JsonValue`, `Optional<T>` for optional arguments |
+| Parameters | `String`, booleans, integer and floating types and wrappers, `BigInteger`, `BigDecimal`, enums, dates, times and a few other values as text (`java.time`, `UUID`, `URI`, `Locale`, `Currency`: see "Dates, times and other values as text"), `List`/`Set`/`Collection`/arrays, `Map<String,V>`, records (nested objects; a record that refers to itself, directly or through other records, collections or `Optional`, is described with `$defs`/`$ref`, see Argument validation), `JsonObject`/`JsonArray`/`JsonValue`, `Optional<T>` for optional arguments |
 | Injected parameters (not in the schema) | `ToolCall` (full request context, MRTR input), `Caller` (who is calling) |
-| Return values | `String` and scalars (text), record / `Map` / `JsonObject` (structured content plus a text copy; records also publish an `outputSchema`), `void` (empty result), `ToolResult` (full control, including `inputRequired`) |
-| Errors | `ToolExecutionException` is shown to the model; any other exception is logged and replaced by a generic message |
+| Return values | `String`, scalars and the text values above (text), record / `Map` / `JsonObject` (structured content plus a text copy; records also publish an `outputSchema`), `void` (empty result), `ToolResult` (full control, including `inputRequired`) |
+| Errors | `ToolExecutionException` is shown to the model; so is a JAX-RS `WebApplicationException` with a 4xx status, a Bean Validation `ConstraintViolationException` and whatever your `ToolExceptionMapper` beans choose (see "When a tool throws"); any other exception is logged and replaced by a generic message |
 | Arguments | Types, ranges and nested structure are checked during conversion; errors name the offending path (`Argument 'times' must be an integer`) |
+
+#### Bean Validation
+
+Constraints from `jakarta.validation.constraints` on a tool parameter or a record component are written into the schema, so the model sees them in `tools/list`, and the library checks every call against that schema before the tool runs. A violation is a `-32602` error that names the argument (`Argument 'times' must be at most 5`).
+
+```java
+@McpTool(description = "Books a duck")
+public String book(@NotBlank @Size(max = 20) String duck,
+                   @Min(1) @Max(5) int times,
+                   @Pattern(regexp = "[A-Z]{3}") String code,
+                   @NotEmpty List<@Email String> contacts) { ... }
+```
+
+| Annotation | Schema |
+| --- | --- |
+| `@NotEmpty`, `@NotBlank`, `@Size` | `minLength`/`maxLength` on text, `minItems`/`maxItems` on lists, sets and arrays, `minProperties`/`maxProperties` on maps; `@NotBlank` also needs a non-space character |
+| `@Min`, `@Max`, `@DecimalMin`, `@DecimalMax`, `@Positive`, `@PositiveOrZero`, `@Negative`, `@NegativeOrZero` | `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` |
+| `@Pattern(regexp = ...)` | `pattern`, anchored (Bean Validation matches the whole text). A `@Pattern` with flags is left to the container |
+| `@Email` | `format: email` (checked only with `mcp.validation.formats=true`) |
+| `@NotNull` | Nothing: a parameter is required unless it is an `Optional` or `@McpParam(required = false)` |
+
+Constraints on type arguments count too (`List<@NotBlank String>`, `Optional<@Positive Integer>`). Everything else (`@Digits`, `@Past`, `@AssertTrue`, your own constraints, groups) is not in the schema. A Jakarta EE container validates calls to CDI beans on its own, and a tool is called through the CDI proxy, so a violation there arrives as a `ConstraintViolationException` whose message the model sees (see "When a tool throws"). The library has no dependency on Bean Validation: it finds the annotations by name. Two limits: the Java regular expression is used as it is, so write patterns that mean the same in JavaScript (`[A-Z]{3}`, not possessive quantifiers or lookbehind); and the constraints of a record also go into the `outputSchema` when the record is a result, so do not put a constraint on a record that your tool can violate itself.
+
+#### When a tool throws
+
+What the model sees, in this order (the first rule that applies):
+
+1. A `ToolExecutionException`: its message.
+2. The first `ToolExceptionMapper` bean that returns a message. The beans are ordered by `@Priority` on their class (lowest first; a class without it comes last).
+3. A JAX-RS `WebApplicationException` with a 4xx status (`NotFoundException`, `BadRequestException`, ...) and a Bean Validation `ConstraintViolationException`: the message of the exception.
+4. Anything else: `Tool execution failed`. The stack trace goes to the server log (WARNING), the exception message does not leave the server, because it can contain paths, SQL or credentials.
+
+The wrappers of reflection, executors and EJB (`InvocationTargetException`, `CompletionException`, `ExecutionException`, `UndeclaredThrowableException`, `EJBException`) are removed first, so the rules and the mappers see the exception the tool threw. A message is cut at 2000 characters. The same rules apply to the work of a task. Protocol errors (bad arguments, unknown tool, cancelled request) do not go through them.
+
+```java
+@ApplicationScoped
+public class BusinessFailures implements ToolExceptionMapper {
+
+    @Override
+    public Optional<String> message(Throwable failure, ToolCall call) {
+        if (failure instanceof BookingRefusedException refused) {
+            return Optional.of("The booking was refused: " + refused.reason());
+        }
+        return Optional.empty();   // not mine: the next mapper, then the rules above
+    }
+}
+```
+
+Return a message only for exceptions that you wrote or know to be safe. A mapper that throws is logged and skipped. The library needs no other setup: the bean is found like any other CDI bean.
 
 Rules: the method must be public and non-static (the call goes through the CDI proxy, so interceptors and scopes apply); one bean per class; use `Optional` for nullable record components in results (a `null` would violate the generated schema). Mistakes in declarations fail the deployment with the class and method name.
 
-Not supported: `java.time` types (`LocalDate`, `Instant`, ...) as parameters or record components; the tool is refused at startup ("unsupported type"). Take a `String` and parse it in the tool, and say the format in `@McpParam(description = "ISO date, 2026-11-24")`. A returned `List` or array becomes a text with the JSON array, not structured content; return a record that holds the list (`record Visits(List<Visit> visits)`) when the client should get an object and an `outputSchema`.
+Not supported: other classes (`Calendar`, `URL`, plain beans, JPA entities) as parameters or record components; the tool is refused at startup ("unsupported type"), and a value of such a class in a result fails the call. Use a record, or a `String` that you parse yourself. A returned `List` or array becomes a text with the JSON array, not structured content; return a record that holds the list (`record Visits(List<Visit> visits)`) when the client should get an object and an `outputSchema`.
+
+### Dates, times and other values as text
+
+These types travel as one JSON string, in the ISO-8601 (or RFC 3339) form and never in the default `toString()` of the type, as parameters, as results, and inside records, lists, maps and `Optional`. The generated schema is `"type": "string"` with a `format` where JSON Schema has one that fits, and an `examples` entry that the model sees.
+
+| Type | Text | Schema `format` |
+| --- | --- | --- |
+| `Instant`, `java.util.Date` | `2026-11-24T09:30:00Z` (a `Date` is written as the instant it denotes) | `date-time` |
+| `OffsetDateTime` | `2026-11-24T10:30:00+01:00` | `date-time` |
+| `ZonedDateTime` | `2026-11-24T10:30:00+01:00[Europe/Paris]` (the offset alone is accepted when reading) | none |
+| `LocalDateTime` | `2026-11-24T10:30:00` | none (no offset, so `date-time` would be wrong) |
+| `LocalDate` | `2026-11-24` | `date` |
+| `LocalTime` | `10:30:00` (`10:30` is accepted when reading) | none |
+| `OffsetTime` | `10:30:00+01:00` | `time` |
+| `YearMonth` | `2026-11` | none |
+| `Duration`, `Period` | `PT1H30M`, `P1Y2M3D` | `duration` |
+| `ZoneId` | `Europe/Paris` or `+01:00` | none |
+| `UUID` | `123e4567-e89b-12d3-a456-426614174000` (only the 36-character form is accepted) | `uuid` |
+| `URI` | `https://example.com/a` | `uri-reference` |
+| `Locale` | BCP 47 tag, `de-CH` | none |
+| `Currency` | ISO 4217 code, `EUR` | none |
+
+Text that does not parse is an invalid-arguments error that names the argument and the expected form (`Argument 'startsAt' must be an ISO-8601 date-time without offset such as 2026-11-24T10:30:00`). The `format` is only checked when `mcp.validation.formats=true` (see Argument validation); the conversion checks the text either way. The time zone of a `LocalDateTime` is yours to define: say in `@McpParam(description = ...)` what the clients should send.
 
 ### Coming from REST and JSON-B
 
-A tool is not a REST resource: its parameters and results are JSON described by a generated schema, and only the types listed in the table above are converted. Everything else fails loudly, never by guessing (`Cannot convert java.time.LocalDateTime to JSON`). The usual translations:
+A tool is not a REST resource: its parameters and results are JSON described by a generated schema, and only the types listed in the table above and the text values below it are converted. Everything else fails loudly, never by guessing (`Cannot convert java.util.GregorianCalendar to JSON`). The usual translations:
 
 | You have | In the tool, use |
 | --- | --- |
-| `LocalDate`, `LocalDateTime`, `Instant`, `OffsetDateTime`, `Duration` | A `String` in ISO-8601 (`value.toString()` out, `LocalDateTime.parse(text)` in). Say the format in `@McpParam(description = ...)` |
-| `java.util.Date`, `Calendar` | Convert to `Instant` first, then as above |
-| `UUID`, `URI`, `Locale` | A `String` (`toString()` out, `UUID.fromString(text)` in) |
+| `LocalDate`, `LocalDateTime`, `Instant`, `OffsetDateTime`, `Duration`, `UUID`, `URI`, `java.util.Date` and the other types of "Dates, times and other values as text" | Use the type as it is. Say what the clients should send in `@McpParam(description = ...)` when it is not obvious (the time zone of a `LocalDateTime`) |
+| `Calendar`, `URL`, `java.sql` types other than `Date` and `Timestamp` | Convert to `Instant`, `URI` or a `String` yourself |
 | A JPA entity or other POJO | A `record` with the fields the model needs, filled by your code. Do not return entities: lazy collections and back-references do not belong in a result |
 | A `List` as the result | Works (the result is text containing the JSON array); to get structured content and an `outputSchema`, return a record that holds the list |
 | A `jakarta.ws.rs.core.Response` | Return its entity, and throw `ToolExecutionException` for an error status |
-| `NotFoundException` and other exceptions | Catch them and throw `ToolExecutionException("Ticket 42 does not exist")`. Any other exception is logged and replaced by a generic message, so the model cannot learn from it |
-| Bean Validation (`@NotNull`, `@Size`, ...) | Not evaluated. Check in the method and throw `ToolExecutionException` with the reason; types, ranges and nesting are already checked from the schema |
+| `NotFoundException` and other exceptions | A `NotFoundException` (any JAX-RS exception with a 4xx status) and a `ConstraintViolationException` show their message to the model. For your own exceptions write a `ToolExceptionMapper` bean (see "When a tool throws"), or throw `ToolExecutionException("Ticket 42 does not exist")`. Any other exception is logged and replaced by a generic message, so the model cannot learn from it |
+| Bean Validation (`@NotBlank`, `@Size`, `@Min`, `@Pattern`, ...) | Put the annotations on the tool parameters and on record components: they go into the schema and are checked before the tool runs (see "Bean Validation"). The ones that JSON Schema cannot express are checked by your container if it validates CDI beans, and its `ConstraintViolationException` message reaches the model |
 | `@RolesAllowed` | Not evaluated. Use `@McpTool(scopes = ...)` with OAuth, or check `Caller` in the method |
 
 To make an existing REST endpoint available, call the service behind it from the tool bean (inject the same CDI bean the resource uses) instead of making an HTTP call to yourself:
@@ -247,7 +318,7 @@ To make an existing REST endpoint available, call the service behind it from the
 @ApplicationScoped
 public class AppointmentTools {
 
-    public record AppointmentView(long id, String duck, String startsAt) {
+    public record AppointmentView(long id, String duck, LocalDateTime startsAt) {
     }
 
     @Inject AppointmentService service;
@@ -255,16 +326,12 @@ public class AppointmentTools {
     @McpTool(description = "Shows an appointment.", readOnlyHint = McpTool.Hint.TRUE)
     public AppointmentView appointment(@McpParam(description = "Appointment id") long id) {
         Appointment a = service.find(id).orElseThrow(() -> new ToolExecutionException("No appointment " + id));
-        return new AppointmentView(a.getId(), a.getDuck().getName(), a.getStartsAt().toString());   // LocalDateTime -> ISO text
+        return new AppointmentView(a.getId(), a.getDuck().getName(), a.getStartsAt());   // written as 2026-11-24T10:30:00
     }
 
     @McpTool(description = "Books an appointment.")
-    public AppointmentView book(long duckId, @McpParam(description = "ISO date-time, 2026-11-24T10:30:00") String startsAt) {
-        try {
-            return view(service.book(duckId, LocalDateTime.parse(startsAt)));
-        } catch (DateTimeParseException e) {
-            throw new ToolExecutionException("startsAt must look like 2026-11-24T10:30:00");
-        }
+    public AppointmentView book(long duckId, @McpParam(description = "Local time of the clinic, 2026-11-24T10:30:00") LocalDateTime startsAt) {
+        return view(service.book(duckId, startsAt));   // text that is not a date-time never gets here: the caller is told the expected form
     }
 }
 ```
@@ -891,7 +958,7 @@ From 1.0.0 on, these are covered by semantic versioning: no incompatible change 
 
 **Not covered:**
 
-- **Internal classes.** `McpRequestHandler`, `McpRegistry`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig`, `TaskConfig`, `McpHttpResponse`, `ListenExecutor`, `BearerJwtAuthenticator`, `JwtVerifier`, `JwksKeyResolver`, `IntrospectionVerifier`, the `Annotated*Handler` classes, `CdiAnnotationScanner`, `SchemaGenerator`, `JsonConverter`, `JsonMapper` and `ResultMapper` are public only because other packages of the library need them. Their Javadoc says so; they can change in any release. The constructors of `AuthConfig` with arguments are the same: an application configures authentication through settings.
+- **Internal classes.** `McpRequestHandler`, `McpRegistry`, `ToolFailures`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig`, `TaskConfig`, `McpHttpResponse`, `ListenExecutor`, `BearerJwtAuthenticator`, `JwtVerifier`, `JwksKeyResolver`, `IntrospectionVerifier`, the `Annotated*Handler` classes, `CdiAnnotationScanner`, `SchemaGenerator`, `JsonConverter`, `JsonMapper` and `ResultMapper` are public only because other packages of the library need them. Their Javadoc says so; they can change in any release. The constructors of `AuthConfig` with arguments are the same: an application configures authentication through settings.
 - **Provisional SPI.** `TaskStore` and `TaskRecord` are what a custom task store depends on. Methods can be added to the interface and components to the record in a minor release, announced in the changelog; a custom store is expected to follow.
 - **Provisional extension.** `Apps` and `McpAppsExtension` follow the MCP Apps extension, which is younger than the core protocol. Their methods can change in a minor release, with an entry in the changelog.
 - **Sealed types.** `ToolResult`, `PromptResult`, `ResourceResult` and `ExternalJobStatus` are created and returned by applications, not switched over. A minor release can add a variant.
@@ -930,6 +997,7 @@ These are left out on purpose and are not planned for any release, so do not wai
 - **SSE and progress for anything but `tools/call` and `subscriptions/listen`:** `resources/read` and `prompts/get` always answer with one JSON response. Do long-running work in a tool, or in a task.
 - **Remote `$ref` in argument validation:** following a URL taken from a schema is a server-side request forgery risk. Local references (`#/$defs/...`) work, see Argument validation.
 - **2025-11-25 compatibility:** only 2026-07-28 is supported.
+- **Jakarta EE 10 and older, Java 17 and older:** the library targets Jakarta EE 11 and later, on Java 21 or newer. This is a decision, not a technical limit; the reasoning is in [docs/design/ee10-baseline.md](docs/design/ee10-baseline.md). Later Jakarta EE versions are claimed in this README only after the integration tests have run on a server that implements them.
 - **Rate limiting:** the specification recommends it, and this library does not do it. The server keeps no state between requests on purpose, so a counter in the process would allow N times the limit on N instances, and a shared counter needs a store this library does not want to own. A gateway or a JAX-RS `ContainerRequestFilter` in front of `McpResource` also sees the requests that never reach a tool (garbage tokens, floods of `tools/list`), which a check inside a tool cannot. An agent stuck in a loop is stopped there, not in the library.
 
 ## Decisions worth a second look
