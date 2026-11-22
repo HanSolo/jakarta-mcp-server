@@ -230,7 +230,7 @@ public final class JsonConverter {
         Set<String> known = new LinkedHashSet<>();
         for (int i = 0; i < components.length; i++) {
             McpParam info = components[i].getAnnotation(McpParam.class);
-            String name = info != null && !info.name().isEmpty() ? info.name() : components[i].getName();
+            String name = Jsonb.name(components[i]);
             known.add(name);
             types[i] = components[i].getType();
             JsonValue member = json.get(name);

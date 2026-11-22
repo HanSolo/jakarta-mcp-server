@@ -1,6 +1,13 @@
 # Changelog
 
 
+## 1.2.0 (unreleased)
+
+### Added
+- **JSON-B annotations in results and record parameters:** `@JsonbProperty` renames a property (on a getter, a field or a record component), `@JsonbTransient` leaves a bean property out, and `@JsonbPropertyOrder` orders the properties of a bean. The schema follows. `@JsonbDateFormat` and `@JsonbNillable` are ignored. The annotations are found by name; JSON-B stays optional. New internal class `Jsonb`; README "JSON-B annotations"; `JsonbAnnotationsTest`.
+- **CDI events for tool calls:** `eu.hansolo.mcp.api.ToolCalled` before and `ToolCompleted` after a tool runs, fired for `@Observes` and `@ObservesAsync`, with call id, tool, subject, duration, outcome (`SUCCESS`, `ERROR`, `INPUT_REQUIRED`, `TASK`, `CANCELLED`) and the exception class name; never arguments, results or messages. A failing observer is logged and does not stop the call. New internal class `ToolEvents`; README "Audit, policy gates and rate limits"; `ToolEventsIT` with the fixture `ToolEventObserver`.
+
+
 ## 1.1.0 (2026-11-22)
 
 ### Added

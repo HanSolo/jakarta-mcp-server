@@ -40,7 +40,7 @@ final class Beans {
 
 
     /** One readable property. */
-    record Property(String name, Type type, Method getter, Field field, McpParam info) {
+    record Property(String name, String json, Type type, Method getter, Field field, McpParam info) {
 
         Object read(Object bean) throws ReflectiveOperationException {
             return getter != null ? getter.invoke(bean) : field.get(bean);
@@ -101,18 +101,59 @@ final class Beans {
                 } catch (RuntimeException e) {
                     // a public method of a public class works without it
                 }
-                found.put(name, new Property(name, method.getGenericReturnType(), method, null, method.getAnnotation(McpParam.class)));
+                Field backing = Jsonb.field(type, name);
+                if (Jsonb.isTransient(method, backing)) {
+                    found.put(name, null);   // a later public field of that name must not bring it back
+                    continue;
+                }
+                McpParam info = method.getAnnotation(McpParam.class) != null ? method.getAnnotation(McpParam.class) : backing == null ? null : backing.getAnnotation(McpParam.class);
+                found.put(name, new Property(name, jsonName(name, info, method, backing), method.getGenericReturnType(), method, null, info));
             }
         }
         for (Field field : type.getFields()) {
             int modifiers = field.getModifiers();
             if (!Modifier.isStatic(modifiers) && !Modifier.isTransient(modifiers) && !found.containsKey(field.getName())) {
-                found.put(field.getName(), new Property(field.getName(), field.getGenericType(), null, field, field.getAnnotation(McpParam.class)));
+                if (Jsonb.isTransient(field)) {
+                    found.put(field.getName(), null);
+                    continue;
+                }
+                McpParam info = field.getAnnotation(McpParam.class);
+                found.put(field.getName(), new Property(field.getName(), jsonName(field.getName(), info, field), field.getGenericType(), null, field, info));
             }
         }
-        List<Property> sorted = new ArrayList<>(found.values());
-        sorted.sort(Comparator.comparing(Property::name));
-        return List.copyOf(sorted);
+        List<Property> sorted = new ArrayList<>(found.values().stream().filter(java.util.Objects::nonNull).toList());
+        sorted.sort(Comparator.comparing(Property::json));
+        return List.copyOf(inOrder(sorted, Jsonb.order(type)));
+    }
+
+    /** {@code @McpParam(name)}, then {@code @JsonbProperty} on the getter or the field, then the Java name. */
+    private static String jsonName(String javaName, McpParam info, java.lang.reflect.AnnotatedElement... elements) {
+        if (info != null && !info.name().isEmpty()) {
+            return info.name();
+        }
+        String renamed = Jsonb.propertyName(elements);
+        return renamed != null ? renamed : javaName;
+    }
+
+    /** The listed properties first, in the listed order (by JSON or Java name), then the others sorted by name. */
+    private static List<Property> inOrder(List<Property> sorted, List<String> order) {
+        if (order.isEmpty()) {
+            return sorted;
+        }
+        List<Property> result = new ArrayList<>();
+        for (String name : order) {
+            for (Property property : sorted) {
+                if ((property.json().equals(name) || property.name().equals(name)) && !result.contains(property)) {
+                    result.add(property);
+                }
+            }
+        }
+        for (Property property : sorted) {
+            if (!result.contains(property)) {
+                result.add(property);
+            }
+        }
+        return result;
     }
 
     /** The property that a public getter stands for, or null if the method is no getter. */

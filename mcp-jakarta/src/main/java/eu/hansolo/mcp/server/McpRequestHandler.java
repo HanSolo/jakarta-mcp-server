@@ -38,6 +38,7 @@ import eu.hansolo.mcp.api.Extensions;
 import eu.hansolo.mcp.api.TaskSupport;
 import eu.hansolo.mcp.api.Tasks;
 import eu.hansolo.mcp.api.ToolCall;
+import eu.hansolo.mcp.api.ToolCompleted;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.api.TraceContext;
 import eu.hansolo.mcp.protocol.ErrorCodes;
@@ -93,6 +94,10 @@ public class McpRequestHandler {
     /** What the model is told when a tool throws; set by CDI, and without CDI only the library's own rules apply. */
     @Inject
     ToolFailures failures = ToolFailures.none();
+
+    /** Fires the CDI events around a tool call; set by CDI, and without CDI nothing is fired. */
+    @Inject
+    ToolEvents events = ToolEvents.none();
 
 
     @Inject
@@ -1029,28 +1034,44 @@ public class McpRequestHandler {
         RequestContext context = prepared.context();
         ToolResult outcome;
         ToolCall call = new ToolCall(prepared.name(), prepared.arguments(), context.clientCapabilities(), context.clientInfo(), prepared.inputResponses(), prepared.requestState(), context.caller(), progress, context.trace());
+        ToolEvents.Run run = events.begin(prepared.name(), context.caller() == null ? null : context.caller().subject());
+        String errorType = null;
         try {
             outcome = prepared.tool().call(call);
             if (outcome instanceof ToolResult.ExternalTask external) {
                 if (!tasks.enabled() || !Tasks.clientSupports(context.clientCapabilities())) {
                     throw McpProtocolException.missingClientExtension(Tasks.EXTENSION_ID);
                 }
-                return tasks.createExternal(external, call);
+                JsonObject started = tasks.createExternal(external, call);
+                run.end(ToolCompleted.Outcome.TASK, null);
+                return started;
             }
             if (outcome instanceof ToolResult.Task task) {
                 if (tasks.enabled() && Tasks.clientSupports(context.clientCapabilities())) {
-                    return tasks.create(task, call);
+                    JsonObject started = tasks.create(task, call);
+                    run.end(ToolCompleted.Outcome.TASK, null);
+                    return started;
                 }
                 outcome = tasks.runInline(task, call);
             }
-        } catch (McpProtocolException | RequestCancelledException e) {
+        } catch (RequestCancelledException e) {
+            run.end(ToolCompleted.Outcome.CANCELLED, null);
+            throw e;
+        } catch (McpProtocolException e) {
+            run.end(ToolCompleted.Outcome.ERROR, e.getClass().getName());
             throw e;
         } catch (Exception e) {
+            errorType = ToolFailures.unwrap(e).getClass().getName();
             outcome = ToolResult.error(failures.message(e, call));
         }
         if (outcome == null) {
             LOG.warning("Tool '" + prepared.name() + "' returned null");
             outcome = ToolResult.error("Tool execution failed");
+        }
+        if (outcome instanceof ToolResult.Complete complete) {
+            run.end(complete.isError() ? ToolCompleted.Outcome.ERROR : ToolCompleted.Outcome.SUCCESS, errorType);
+        } else {
+            run.end(ToolCompleted.Outcome.INPUT_REQUIRED, null);
         }
         return toResult(outcome);
     }

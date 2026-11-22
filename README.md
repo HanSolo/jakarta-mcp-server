@@ -239,7 +239,19 @@ public Duck find(String name) { return ducks.find(name); }
 
 `@McpParam(name = ..., description = ...)` on a getter or a public field renames and describes the property. Limits, each with a message that names the class: beans nest at most 8 levels (a record, list or map between two beans does not count); a bean that contains itself fails with the path (`Order -> Customer -> Order`); proxies (a lazy-loading JPA entity, a CDI or EJB proxy) are refused; a class without getters is refused; JDK and Jakarta classes are never read as beans. Getters run during the call, so a getter that loads a lazy collection loads it, and one that throws fails the call with the property name. A getter whose type the schema cannot describe (`Object`, a type variable) is `{}` in the schema and is still written at run time.
 
-Beans are for results only. A bean as a parameter is refused when the application starts, because reading JSON into a bean needs constructor and setter rules that records already give you: use a record for input. Not supported: JSON-B annotations (`@JsonbProperty`, `@JsonbTransient`), `@JsonIgnore`; a property you do not want to show needs a DTO without that getter.
+Beans are for results only. A bean as a parameter is refused when the application starts, because reading JSON into a bean needs constructor and setter rules that records already give you: use a record for input. Not supported: `@JsonIgnore` and other JSON libraries' annotations. For JSON-B annotations see the next subsection.
+
+#### JSON-B annotations
+
+A DTO that already carries JSON-B annotations is read the way its REST resource writes it. These are honoured, for beans (results) and for records (results and parameters), and the schema follows:
+
+| Annotation | Effect |
+| --- | --- |
+| `@JsonbProperty("first_name")` | The property has that name, on a getter, a public field, the private field behind a getter, or a record component. `@McpParam(name = ...)` wins if both are present |
+| `@JsonbTransient` | A bean property with it, on the getter, the public field or the field behind the getter, is left out of the result and the schema |
+| `@JsonbPropertyOrder({"name", "age"})` | On a bean class: the listed properties come first in that order, the others follow sorted by name |
+
+Ignored, without an error: `@JsonbDateFormat` and `@JsonbNumberFormat` (dates stay ISO-8601 and numbers plain, because the schema says so and the model reads the schema), `@JsonbNillable` (a `null` is always left out), `@JsonbTypeAdapter`, `@JsonbCreator` and `@JsonbVisibility`. The library finds the annotations by name and never calls JSON-B, so JSON-B can be absent. `@JsonbTransient` on a record component has no effect on parameters, because a record needs all its components.
 
 #### Bean Validation
 
@@ -392,12 +404,33 @@ Tools must not rely on state between calls. If a tool needs to continue across c
 
 ### Audit, policy gates and rate limits
 
-None of these needs a hook from this library. Tools are called through the CDI proxy, so an interceptor on the tool bean sees every call and its arguments, and can refuse it before the method runs. `InterceptorsIT` runs the pattern on all three servers, with `AuditInterceptor` in `mcp-it-fixture` as the example: it records each call (audit), refuses the text `blocked` (a policy gate) and allows a burst only three times (a rate limit).
+None of these needs a hook from this library (for observing calls without intercepting them, see the CDI events below). Tools are called through the CDI proxy, so an interceptor on the tool bean sees every call and its arguments, and can refuse it before the method runs. `InterceptorsIT` runs the pattern on all three servers, with `AuditInterceptor` in `mcp-it-fixture` as the example: it records each call (audit), refuses the text `blocked` (a policy gate) and allows a burst only three times (a rate limit).
 
 - Bind the interceptor to the tool **method**. On an `McpToolHandler` bean, a binding on the whole class also catches the registry's calls to `name()`, `description()` and the others.
 - Refuse an `@McpTool` method by throwing `ToolExecutionException`, and an `McpToolHandler.call` by returning `ToolResult.error(...)`. The client gets a result with `isError` and your message, and the tool itself never runs.
 - A rate limit in an interceptor counts per process. With several instances, or to stop floods that never reach a tool, limit in front of the endpoint (see "Non-goals").
 - Not covered: `@RolesAllowed`. It needs the container's security context, which this library's own token validation does not set. Check scopes with `@McpTool(scopes = ...)` or read `Caller` in an interceptor.
+
+**CDI events.** If you would rather observe than intercept, the library fires two events around every tool call that reaches the tool: `ToolCalled` before, `ToolCompleted` after. They cover tools of every kind (annotated methods and handler beans).
+
+```java
+@ApplicationScoped
+public class ToolAudit {
+
+    void called(@Observes ToolCalled event) {
+        log.info("tool " + event.tool() + " called by '" + event.subject() + "' (call " + event.callId() + ")");
+    }
+
+    void completed(@ObservesAsync ToolCompleted event) {
+        metrics.timer("mcp.tool." + event.tool()).record(event.duration());
+        if (event.outcome() == ToolCompleted.Outcome.ERROR) {
+            log.warning("tool " + event.tool() + " failed: " + event.errorType());
+        }
+    }
+}
+```
+
+The events carry the call id (the same in both), the tool, the subject, the start time, and in `ToolCompleted` the duration, the outcome (`SUCCESS`, `ERROR`, `INPUT_REQUIRED`, `TASK`, `CANCELLED`) and, for an exception, its class name. They never carry arguments, results or exception messages, because those can hold personal data and secrets; a tool that needs them in an audit trail writes them itself (an interceptor sees the arguments). Both `@Observes` (the call waits for the observer, so keep it quick) and `@ObservesAsync` work. An observer that throws is logged and does not stop the call. Requests that are refused before the tool runs (unknown tool, missing scope, invalid arguments) fire nothing, and a tool that starts a task completes with `TASK` when the task has started: the work of the task fires no event. `ToolCompleted.Outcome` can get more values in a minor release, so a `switch` over it needs a `default`.
 
 ### Request state in multi round-trip tools
 

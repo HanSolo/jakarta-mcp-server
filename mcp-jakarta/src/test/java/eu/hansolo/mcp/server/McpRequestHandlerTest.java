@@ -4,7 +4,10 @@ import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
 import eu.hansolo.mcp.api.McpToolHandler;
+import jakarta.enterprise.event.Event;
 import eu.hansolo.mcp.api.ToolCall;
+import eu.hansolo.mcp.api.ToolCalled;
+import eu.hansolo.mcp.api.ToolCompleted;
 import eu.hansolo.mcp.api.ToolExceptionMapper;
 import eu.hansolo.mcp.api.ToolResult;
 import eu.hansolo.mcp.protocol.ErrorCodes;
@@ -14,10 +17,12 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -231,6 +236,81 @@ class McpRequestHandlerTest {
         JsonObject result = json(call("boom", null)).getJsonObject("result");
         assertTrue(result.getBoolean("isError"));
         assertEquals("Mapped: boom", result.getJsonArray("content").getJsonObject(0).getString("text"));
+    }
+
+    private final List<Object> fired      = new ArrayList<>();
+    private final List<Object> firedAsync = new ArrayList<>();
+
+    /** A CDI {@code Event} that records what is fired; {@code failing} makes every synchronous observer throw. */
+    @SuppressWarnings("unchecked")
+    private <T> Event<T> recorder(boolean failing) {
+        return (Event<T>) java.lang.reflect.Proxy.newProxyInstance(Event.class.getClassLoader(), new Class<?>[] {Event.class}, (proxy, method, args) -> {
+            if (method.getName().equals("fire")) {
+                if (failing) {
+                    throw new IllegalStateException("observer bug");
+                }
+                fired.add(args[0]);
+                return null;
+            }
+            if (method.getName().equals("fireAsync")) {
+                firedAsync.add(args[0]);
+                return CompletableFuture.completedFuture(args[0]);
+            }
+            throw new UnsupportedOperationException(method.getName());
+        });
+    }
+
+    private void observeTools(boolean failing) {
+        handler.events = new ToolEvents(recorder(failing), recorder(failing));
+    }
+
+    @Test
+    void aSuccessfulToolCallFiresCalledThenCompleted() {
+        observeTools(false);
+        call("echo", Json.createObjectBuilder().add("message", "hi").build());
+        assertEquals(2, fired.size());
+        ToolCalled called = (ToolCalled) fired.get(0);
+        ToolCompleted completed = (ToolCompleted) fired.get(1);
+        assertEquals("echo", called.tool());
+        assertEquals(called.callId(), completed.callId());
+        assertEquals(called.at(), completed.startedAt());
+        assertEquals(ToolCompleted.Outcome.SUCCESS, completed.outcome());
+        assertNull(completed.errorType());
+        assertFalse(completed.duration().isNegative());
+        assertEquals(fired, firedAsync, "asynchronous observers get the same events");
+    }
+
+    @Test
+    void aThrowingToolIsAnErrorWithTheClassNameAndNeverTheMessage() {
+        observeTools(false);
+        call("boom", null);
+        ToolCompleted completed = (ToolCompleted) fired.get(1);
+        assertEquals(ToolCompleted.Outcome.ERROR, completed.outcome());
+        assertEquals(IllegalStateException.class.getName(), completed.errorType());
+        assertFalse(fired.toString().contains("secret detail"));
+    }
+
+    @Test
+    void aRequestForInputIsReportedAsInputRequired() {
+        observeTools(false);
+        call("ask", null);
+        assertEquals(ToolCompleted.Outcome.INPUT_REQUIRED, ((ToolCompleted) fired.get(1)).outcome());
+    }
+
+    @Test
+    void aRequestRefusedBeforeTheToolRunsFiresNothing() {
+        observeTools(false);
+        call("nope", null);
+        call("echo", Json.createObjectBuilder().build());
+        assertTrue(fired.isEmpty());
+        assertTrue(firedAsync.isEmpty());
+    }
+
+    @Test
+    void aFailingObserverDoesNotStopTheCall() {
+        observeTools(true);
+        JsonObject result = json(call("echo", Json.createObjectBuilder().add("message", "hi").build())).getJsonObject("result");
+        assertFalse(result.getBoolean("isError", false));
     }
 
     @Test

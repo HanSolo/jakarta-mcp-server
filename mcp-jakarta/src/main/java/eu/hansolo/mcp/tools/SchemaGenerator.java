@@ -172,7 +172,7 @@ public final class SchemaGenerator {
                     schema = JsonObject.EMPTY_JSON_OBJECT;   // a type that the schema cannot describe: any value, and the mapper decides at run time
                 }
                 McpParam info = property.info();
-                String propertyName = info != null && !info.name().isEmpty() ? info.name() : property.name();
+                String propertyName = property.json();
                 described.add(propertyName, withDescription(schema, info == null ? "" : info.description()));
                 if (property.type() instanceof Class<?> c && c.isPrimitive()) {
                     required.add(propertyName);
@@ -200,7 +200,7 @@ public final class SchemaGenerator {
         boolean anyRequired = false;
         for (RecordComponent component : record.getRecordComponents()) {
             McpParam info = component.getAnnotation(McpParam.class);
-            String name = info != null && !info.name().isEmpty() ? info.name() : component.getName();
+            String name = Jsonb.name(component);
             JsonObject constrained = Constraints.apply(schema(component.getGenericType(), defs), component.getAnnotations(), component.getAnnotatedType());
             properties.add(name, withHeader(withDescription(constrained, info == null ? "" : info.description()), info == null ? "" : info.header()));
             if (isRequired(component.getGenericType(), info)) {

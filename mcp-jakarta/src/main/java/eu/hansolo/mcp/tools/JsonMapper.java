@@ -4,7 +4,6 @@ import jakarta.json.Json;
 import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObjectBuilder;
 import jakarta.json.JsonValue;
-import eu.hansolo.mcp.api.McpParam;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.RecordComponent;
@@ -138,8 +137,7 @@ public final class JsonMapper {
                 if (member == null || member instanceof Optional<?> optional && optional.isEmpty()) {
                     continue;
                 }
-                McpParam info = property.info();
-                object.add(info != null && !info.name().isEmpty() ? info.name() : property.name(), toJson(member, depth + 1, path));
+                object.add(property.json(), toJson(member, depth + 1, path));
             }
             return object.build();
         } finally {
@@ -170,8 +168,7 @@ public final class JsonMapper {
     private static JsonValue record(Object value, int depth, List<Object> path) {
         JsonObjectBuilder object = Json.createObjectBuilder();
         for (RecordComponent component : value.getClass().getRecordComponents()) {
-            McpParam info = component.getAnnotation(McpParam.class);
-            String name = info != null && !info.name().isEmpty() ? info.name() : component.getName();
+            String name = Jsonb.name(component);
             Object member;
             try {
                 var accessor = component.getAccessor();
