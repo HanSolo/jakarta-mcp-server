@@ -8,6 +8,38 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 
 ## Status: read this first
 
+**1.0.0 means a stable API, not a finished protocol.** The Java API and the settings are covered by semantic versioning (see "Stable API and internals"). The wire protocol is the specification 2026-07-28, and the extensions (Tasks, Apps, Skills) are younger than the core.
+
+**Verified for the release commit `d5026abed1e21826c72f67f4f2e3389f9fe5a24b` (2026-11-22):**
+
+- All jobs of the GitHub Actions workflow passed: unit tests, the release build (sources and Javadoc jars), the integration tests on Payara, WildFly and Open Liberty, and the MCP conformance suite (196 tests, no failures; `tasks-status-notifications` is skipped by the suite, see "Conformance suite").
+- The Docker Compose setup has been run.
+- Authentication (JWT and opaque tokens) is covered by integration tests against Keycloak 26.4 (the tickets run on Open Liberty is skipped, see below).
+
+**Tried by the author with real MCP hosts and applications (all without authentication):**
+
+| What | Result |
+| --- | --- |
+| MCP Inspector 2.14.0 (`--protocol-era modern`) | Tasks flow against `mcp-example-tasks`, the clock page of `mcp-example-apps`, and the tools of a Jakarta EE application (duck-clinic) |
+| Claude Code | Tools of a Jakarta EE application (duck-clinic): booking an appointment, declining one, and refusing a double booking |
+| Claude Desktop | Tried by the author |
+| A Java client written by the author | Calls from two Payara applications that also use the Jakarta Agentic AI specification |
+| Application servers | Payara (several applications), and WildFly and Open Liberty through the integration tests |
+
+**Not tested:** VS Code and other MCP hosts; a real host completing an OAuth login against the server (the Keycloak tests use the library's own test client, not a host); identity providers other than Keycloak; other application servers than the three above. An application built on Quarkus uses its own MCP server in the author's demo, so this library has not been run there.
+
+**Known limits:**
+
+- **2026-07-28 clients only.** Clients that still require the `initialize` handshake (2025-11-25 and earlier) get HTTP 400 naming the supported version.
+- **Authentication is off by default** (see below). With it off, anyone who can reach the endpoint can call every tool, and the server logs a warning at startup.
+- **Open Liberty:** the tickets example does not start there without a data source: Liberty creates a container-managed `EntityManagerFactory` for `@PersistenceUnit` and looks for `java:comp/DefaultDataSource` instead of using the `jakarta.persistence.jdbc.*` properties of the example's resource-local unit. The tickets integration test is therefore skipped on Liberty. A `<dataSource id="DefaultDataSource">` in `server.xml` with the H2 jar on the server should fix it (untested). The library itself runs on Liberty.
+- **Conformance:** the suite is `@alpha`; the Tasks status notifications are not scored by it.
+- **`latest` image tags are moving:** pin the image with `-Dmcp.image=payara/micro:<tag>` once you have checked the tag name on Docker Hub.
+- After renaming packages or moving files, always build with `mvn clean verify`: stale classes in `target/` end up in the WAR and the deployment fails with a `ClassNotFoundException`.
+
+<details>
+<summary>Run reports from before 1.0.0 (history)</summary>
+
 - **What has been run:** `mvn verify` of the original server (discover, tools/list, tools/call, MRTR) passed on the author's machine, and the server was exercised with MCP Inspector (`--protocol-era modern`) and curl against Payara Micro.
 - **Verified on the author's machine (macOS, Docker Desktop 29, Payara Micro 7.2026.10 Build 18 via `payara/micro:latest`, Keycloak 26.4):** `mvn clean verify` passed with 145 unit tests and 46 integration tests (30 in `McpServerIT` at the time, 34 now with the completion tests, 9 in `McpAuthServerIT` with a test issuer, 7 in `McpKeycloakIT` with a real Keycloak). That covers CDI scanning of `@McpTool` / `@McpResource` / `@McpPrompt` beans, the well-known metadata endpoint, 401/403 challenges, audience binding, MRTR and the `eu.hansolo.mcp` rename.
 - **Integration run of 2026-11-10, started 18:03 (`scripts/it.sh --conformance`; the author has seen the summary and the logs), on the clean committed tree `v0.6.0-10-ga4c29f5`:** 150 integration tests per server, none failing, on Payara (`payara/micro:latest`), WildFly (`quay.io/wildfly/wildfly:latest-jdk21`) and Open Liberty (`full-java21-openj9-ubi-minimal`). The only skip is `McpTicketsKeycloakIT` on Liberty (10 tests), by design. Tasks classes on all three servers: `TasksIT` 9, `TasksClusterIT` 5 (PostgreSQL), `TasksClusterMariaDbIT` 5 and `TasksJndiIT` 3 (a JNDI `DataSource` provided by each server). The MCP conformance suite ran in the same run: 196 of 196 on all three servers, with `MCP_TASKS_ENABLED=true`, plus 13 scenarios that the suite does not score for 2026-07-28 (the ten Tasks scenarios and three pending ones), none failing. `mvn clean verify` (unit tests with JUnit 6.1.3 and H2 2.5.252, then the integration tests on Payara) passed the same day. `TasksClusterMySqlIT` (MySQL 8.4 with Connector/J) was added after that run and passed on Payara. Setup: macOS, Docker Desktop 29.9.2, JDK 25 compiling to release 21, Maven 3.9.9, Keycloak 26.4, Testcontainers 2.0.5. `tasks-status-notifications` reports no checks because the suite skips it (see Conformance suite).
@@ -21,6 +53,8 @@ The only dependency is the Jakarta EE 11 Web Profile API (CDI, JAX-RS, JSON-P). 
 - **Unverified:** behaviour with a real identity provider (see the Keycloak item above; any other provider is untested). `latest` is a moving tag: pin the image with `-Dmcp.image=payara/micro:<tag>` once you have checked the tag name on Docker Hub.
 - **2026-07-28 clients only.** Clients that still require the `initialize` handshake (2025-11-25 and earlier) get HTTP 400 naming the supported version.
 - **Authentication is off by default** (see below). With it off, anyone who can reach the endpoint can call every tool, and the server logs a warning at startup.
+
+</details>
 
 ## Layout
 
@@ -859,6 +893,7 @@ From 1.0.0 on, these are covered by semantic versioning: no incompatible change 
 
 - **Internal classes.** `McpRequestHandler`, `McpRegistry`, `McpStartup`, `TaskService`, `McpExtensions`, `UriTemplate`, `McpConfig`, `TaskConfig`, `McpHttpResponse`, `ListenExecutor`, `BearerJwtAuthenticator`, `JwtVerifier`, `JwksKeyResolver`, `IntrospectionVerifier`, the `Annotated*Handler` classes, `CdiAnnotationScanner`, `SchemaGenerator`, `JsonConverter`, `JsonMapper` and `ResultMapper` are public only because other packages of the library need them. Their Javadoc says so; they can change in any release. The constructors of `AuthConfig` with arguments are the same: an application configures authentication through settings.
 - **Provisional SPI.** `TaskStore` and `TaskRecord` are what a custom task store depends on. Methods can be added to the interface and components to the record in a minor release, announced in the changelog; a custom store is expected to follow.
+- **Provisional extension.** `Apps` and `McpAppsExtension` follow the MCP Apps extension, which is younger than the core protocol. Their methods can change in a minor release, with an entry in the changelog.
 - **Sealed types.** `ToolResult`, `PromptResult`, `ResourceResult` and `ExternalJobStatus` are created and returned by applications, not switched over. A minor release can add a variant.
 - **Records.** When a component is added to a record in `api`, the old constructor stays as an overload, so code that creates one keeps compiling. Code that deconstructs a record with a pattern does not get that promise.
 
