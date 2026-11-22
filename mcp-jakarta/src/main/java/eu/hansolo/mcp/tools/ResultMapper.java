@@ -40,6 +40,6 @@ public final class ResultMapper {
 
     /** True if results of this declared type carry structured content and so should advertise an outputSchema. */
     public static boolean hasOutputSchema(Class<?> returnType) {
-        return returnType.isRecord();
+        return returnType.isRecord() || Beans.isBean(returnType);
     }
 }

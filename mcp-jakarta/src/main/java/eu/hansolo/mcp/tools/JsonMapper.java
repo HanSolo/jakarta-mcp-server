@@ -10,7 +10,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -30,10 +32,11 @@ public final class JsonMapper {
 
 
     public static JsonValue toJson(Object value) {
-        return toJson(value, 0);
+        return toJson(value, 0, new ArrayList<>());
     }
 
-    private static JsonValue toJson(Object value, int depth) {
+    /** {@code path} holds the beans that contain the value, outermost first. */
+    private static JsonValue toJson(Object value, int depth, List<Object> path) {
         if (depth > MAX_DEPTH) {
             throw new IllegalStateException("Result is nested too deeply (cyclic structure?)");
         }
@@ -71,31 +74,85 @@ public final class JsonMapper {
             return Json.createValue(ValueTypes.format(value));
         }
         if (value instanceof Optional<?> optional) {
-            return optional.isPresent() ? toJson(optional.get(), depth + 1) : JsonValue.NULL;
+            return optional.isPresent() ? toJson(optional.get(), depth + 1, path) : JsonValue.NULL;
         }
         if (value instanceof Map<?, ?> map) {
             JsonObjectBuilder object = Json.createObjectBuilder();
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                object.add(String.valueOf(entry.getKey()), toJson(entry.getValue(), depth + 1));
+                object.add(String.valueOf(entry.getKey()), toJson(entry.getValue(), depth + 1, path));
             }
             return object.build();
         }
         if (value instanceof Collection<?> collection) {
             JsonArrayBuilder array = Json.createArrayBuilder();
-            collection.forEach(element -> array.add(toJson(element, depth + 1)));
+            collection.forEach(element -> array.add(toJson(element, depth + 1, path)));
             return array.build();
         }
         if (value.getClass().isArray()) {
             JsonArrayBuilder array = Json.createArrayBuilder();
             for (int i = 0; i < java.lang.reflect.Array.getLength(value); i++) {
-                array.add(toJson(java.lang.reflect.Array.get(value, i), depth + 1));
+                array.add(toJson(java.lang.reflect.Array.get(value, i), depth + 1, path));
             }
             return array.build();
         }
         if (value.getClass().isRecord()) {
-            return record(value, depth);
+            return record(value, depth, path);
         }
-        throw new IllegalStateException("Cannot convert " + value.getClass().getName() + " to JSON: return a String, a number, a java.time value, a UUID, a record, a Map, a collection, or a JSON-P value");
+        if (Beans.isBean(value.getClass())) {
+            return bean(value, depth, path);
+        }
+        throw new IllegalStateException("Cannot convert " + value.getClass().getName() + " to JSON: return a String, a number, a java.time value, a UUID, a record, a bean with getters, a Map, a collection, or a JSON-P value");
+    }
+
+    /** An object made of the getters and public fields; null and empty {@code Optional} properties are left out. */
+    private static JsonValue bean(Object value, int depth, List<Object> path) {
+        Class<?> type = value.getClass();
+        String refusal = Beans.refusal(type);
+        if (refusal != null) {
+            throw new IllegalStateException("Cannot convert " + refusal + " to JSON: copy it into a record or a DTO first");
+        }
+        for (Object outer : path) {
+            if (outer == value) {
+                throw new IllegalStateException("Cannot convert " + type.getName() + " to JSON: it contains itself (" + describe(path, type) + "); return a record or a DTO without the back reference");
+            }
+        }
+        if (path.size() >= Beans.MAX_DEPTH) {
+            throw new IllegalStateException("Cannot convert " + type.getName() + " to JSON: beans are nested deeper than " + Beans.MAX_DEPTH + " levels (" + describe(path, type) + "); return a record or a DTO");
+        }
+        List<Beans.Property> properties = Beans.properties(type);
+        if (properties.isEmpty()) {
+            throw new IllegalStateException("Cannot convert " + type.getName() + " to JSON: it has no public getters or fields");
+        }
+        path.add(value);
+        try {
+            JsonObjectBuilder object = Json.createObjectBuilder();
+            for (Beans.Property property : properties) {
+                Object member;
+                try {
+                    member = property.read(value);
+                } catch (InvocationTargetException e) {
+                    throw new IllegalStateException("Cannot read property '" + property.name() + "' of " + type.getName() + ": " + e.getCause(), e.getCause());
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    throw new IllegalStateException("Cannot read property '" + property.name() + "' of " + type.getName(), e);
+                }
+                if (member == null || member instanceof Optional<?> optional && optional.isEmpty()) {
+                    continue;
+                }
+                McpParam info = property.info();
+                object.add(info != null && !info.name().isEmpty() ? info.name() : property.name(), toJson(member, depth + 1, path));
+            }
+            return object.build();
+        } finally {
+            path.remove(path.size() - 1);
+        }
+    }
+
+    private static String describe(List<Object> path, Class<?> last) {
+        StringBuilder text = new StringBuilder();
+        for (Object outer : path) {
+            text.append(outer.getClass().getSimpleName()).append(" -> ");
+        }
+        return text.append(last.getSimpleName()).toString();
     }
 
     /** A whole {@code double} is written without a fraction ({@code 5}, not {@code 5.0}); a {@code float} keeps the digits it prints with ({@code 0.1}, not {@code 0.10000000149011612}). */
@@ -110,7 +167,7 @@ public final class JsonMapper {
         return value instanceof Float ? Json.createValue(new BigDecimal(value.toString())) : Json.createValue(d);
     }
 
-    private static JsonValue record(Object value, int depth) {
+    private static JsonValue record(Object value, int depth, List<Object> path) {
         JsonObjectBuilder object = Json.createObjectBuilder();
         for (RecordComponent component : value.getClass().getRecordComponents()) {
             McpParam info = component.getAnnotation(McpParam.class);
@@ -126,7 +183,7 @@ public final class JsonMapper {
             if (member instanceof Optional<?> optional && optional.isEmpty()) {
                 continue;
             }
-            object.add(name, toJson(member, depth + 1));
+            object.add(name, toJson(member, depth + 1, path));
         }
         return object.build();
     }

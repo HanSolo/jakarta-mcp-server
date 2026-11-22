@@ -81,6 +81,16 @@ final class ValueTypes {
         return KINDS.containsKey(declared);
     }
 
+    /** True if the class is one of the supported types or a subclass of one. */
+    static boolean isValueClass(Class<?> type) {
+        for (Class<?> known : KINDS.keySet()) {
+            if (known.isAssignableFrom(type)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** True if this value is one of the supported types (or a subclass, such as {@code java.sql.Timestamp} or a zone region). */
     static boolean isValue(Object value) {
         if (value == null) {

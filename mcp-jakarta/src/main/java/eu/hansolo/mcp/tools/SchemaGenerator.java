@@ -48,6 +48,16 @@ public final class SchemaGenerator {
     }
 
     /**
+     * The schema of a tool result of this type. Unlike parameters, results can be plain beans with getters, which are described by
+     * their properties (nothing is required except primitives, and extra properties of a subclass are allowed).
+     */
+    public static JsonObject schemaForResult(Type type) {
+        Defs defs = Defs.forResult();
+        JsonObject schema = schemaFor(type, defs);
+        return defs.isEmpty() ? schema : Json.createObjectBuilder(schema).add("$defs", defs.toJson()).build();
+    }
+
+    /**
      * The schema of one value of this type, with the definitions of recursive records collected in {@code defs}. A schema that is
      * a part of a larger one (a parameter of a tool) must have the definitions added to the root of that schema with
      * {@link Defs#addTo(JsonObjectBuilder)}, because {@code #/$defs/...} is resolved from the root.
@@ -110,7 +120,10 @@ public final class SchemaGenerator {
         if (raw.isRecord()) {
             return recordSchema(raw, defs);
         }
-        throw unsupported(type, "supported are scalars, enums, java.time dates and times, UUID, URI, Locale, Currency, List/Set/Collection/arrays, Map<String,V>, records, Optional and the JSON-P types");
+        if (defs.result && Beans.isBean(raw)) {
+            return beanSchema(raw, defs);
+        }
+        throw unsupported(type, "supported are scalars, enums, java.time dates and times, UUID, URI, Locale, Currency, List/Set/Collection/arrays, Map<String,V>, records, Optional and the JSON-P types (a bean with getters only as a result)");
     }
 
     private static JsonObject recordSchema(Class<?> record, Defs defs) {
@@ -123,6 +136,62 @@ public final class SchemaGenerator {
             defs.put(name, recordBody(record, defs));
         }
         return Json.createObjectBuilder().add("$ref", "#/$defs/" + name).build();
+    }
+
+    /** A bean is described by its properties; one that contains itself, directly or through other types, is described with {@code $defs}. */
+    private static JsonObject beanSchema(Class<?> bean, Defs defs) {
+        String name = defs.nameOf(bean);
+        if (defs.contains(name) || defs.beanStack.contains(bean)) {
+            if (!defs.contains(name)) {
+                defs.recursiveBeans.add(bean);
+            }
+            return Json.createObjectBuilder().add("$ref", "#/$defs/" + name).build();
+        }
+        if (defs.beanStack.size() >= Beans.MAX_DEPTH) {
+            throw new IllegalStateException(bean.getName() + ": beans are nested deeper than " + Beans.MAX_DEPTH + " levels");
+        }
+        String refusal = Beans.refusal(bean);
+        if (refusal != null) {
+            throw new IllegalStateException(refusal + ": copy it into a record or a DTO");
+        }
+        List<Beans.Property> properties = Beans.properties(bean);
+        if (properties.isEmpty()) {
+            throw unsupported(bean, "it has no public getters or fields");
+        }
+        defs.beanStack.push(bean);
+        JsonObject body;
+        try {
+            JsonObjectBuilder described = Json.createObjectBuilder();
+            JsonArrayBuilder required = Json.createArrayBuilder();
+            boolean anyRequired = false;
+            for (Beans.Property property : properties) {
+                JsonObject schema;
+                try {
+                    schema = schema(property.type(), defs);
+                } catch (IllegalStateException e) {
+                    schema = JsonObject.EMPTY_JSON_OBJECT;   // a type that the schema cannot describe: any value, and the mapper decides at run time
+                }
+                McpParam info = property.info();
+                String propertyName = info != null && !info.name().isEmpty() ? info.name() : property.name();
+                described.add(propertyName, withDescription(schema, info == null ? "" : info.description()));
+                if (property.type() instanceof Class<?> c && c.isPrimitive()) {
+                    required.add(propertyName);
+                    anyRequired = true;
+                }
+            }
+            JsonObjectBuilder object = Json.createObjectBuilder().add("type", "object").add("properties", described);
+            if (anyRequired) {
+                object.add("required", required);
+            }
+            body = object.build();
+        } finally {
+            defs.beanStack.pop();
+        }
+        if (defs.recursiveBeans.contains(bean)) {
+            defs.put(name, body);
+            return Json.createObjectBuilder().add("$ref", "#/$defs/" + name).build();
+        }
+        return body;
     }
 
     private static JsonObject recordBody(Class<?> record, Defs defs) {
@@ -191,6 +260,23 @@ public final class SchemaGenerator {
     public static final class Defs {
         private final Map<String, JsonObject> schemas = new LinkedHashMap<>();
         private final Map<Class<?>, String>   names   = new HashMap<>();
+        private final boolean                 result;
+        private final java.util.ArrayDeque<Class<?>> beanStack      = new java.util.ArrayDeque<>();
+        private final Set<Class<?>>           recursiveBeans = new HashSet<>();
+
+
+        public Defs() {
+            this(false);
+        }
+
+        private Defs(boolean result) {
+            this.result = result;
+        }
+
+        /** Definitions for the schema of a tool result, where beans are allowed. */
+        static Defs forResult() {
+            return new Defs(true);
+        }
 
 
         public boolean isEmpty() {

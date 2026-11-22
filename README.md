@@ -217,9 +217,29 @@ public class Calculator {
 | --- | --- |
 | Parameters | `String`, booleans, integer and floating types and wrappers, `BigInteger`, `BigDecimal`, enums, dates, times and a few other values as text (`java.time`, `UUID`, `URI`, `Locale`, `Currency`: see "Dates, times and other values as text"), `List`/`Set`/`Collection`/arrays, `Map<String,V>`, records (nested objects; a record that refers to itself, directly or through other records, collections or `Optional`, is described with `$defs`/`$ref`, see Argument validation), `JsonObject`/`JsonArray`/`JsonValue`, `Optional<T>` for optional arguments |
 | Injected parameters (not in the schema) | `ToolCall` (full request context, MRTR input), `Caller` (who is calling) |
-| Return values | `String`, scalars and the text values above (text), record / `Map` / `JsonObject` (structured content plus a text copy; records also publish an `outputSchema`), `void` (empty result), `ToolResult` (full control, including `inputRequired`) |
+| Return values | `String`, scalars and the text values above (text), record / bean with getters / `Map` / `JsonObject` (structured content plus a text copy; records and beans also publish an `outputSchema`; see "Beans as results"), `void` (empty result), `ToolResult` (full control, including `inputRequired`) |
 | Errors | `ToolExecutionException` is shown to the model; so is a JAX-RS `WebApplicationException` with a 4xx status, a Bean Validation `ConstraintViolationException` and whatever your `ToolExceptionMapper` beans choose (see "When a tool throws"); any other exception is logged and replaced by a generic message |
 | Arguments | Types, ranges and nested structure are checked during conversion; errors name the offending path (`Argument 'times' must be an integer`) |
+
+#### Beans as results
+
+A tool can return a plain bean: a class with public getters (`getName()`, and `isActive()` for a `boolean`) and public fields. The result is an object with one property per getter, sorted by name, in the usual JavaBeans spelling (`getURL()` is `URL`, `getFirstName()` is `firstName`); `null` and an empty `Optional` are left out. Properties follow the same rules as everything else: text values, records, lists, maps and other beans work. The tool publishes an `outputSchema` that lists the properties; only primitives are required, because a `null` is omitted, and extra properties of a subclass are allowed.
+
+```java
+public class Duck {                       // a legacy DTO, not a record
+    public String getName() { ... }
+    public boolean isHungry() { ... }
+    @McpParam(description = "Day of the first swim")
+    public LocalDate getFirstSwim() { ... }
+}
+
+@McpTool
+public Duck find(String name) { return ducks.find(name); }
+```
+
+`@McpParam(name = ..., description = ...)` on a getter or a public field renames and describes the property. Limits, each with a message that names the class: beans nest at most 8 levels (a record, list or map between two beans does not count); a bean that contains itself fails with the path (`Order -> Customer -> Order`); proxies (a lazy-loading JPA entity, a CDI or EJB proxy) are refused; a class without getters is refused; JDK and Jakarta classes are never read as beans. Getters run during the call, so a getter that loads a lazy collection loads it, and one that throws fails the call with the property name. A getter whose type the schema cannot describe (`Object`, a type variable) is `{}` in the schema and is still written at run time.
+
+Beans are for results only. A bean as a parameter is refused when the application starts, because reading JSON into a bean needs constructor and setter rules that records already give you: use a record for input. Not supported: JSON-B annotations (`@JsonbProperty`, `@JsonbTransient`), `@JsonIgnore`; a property you do not want to show needs a DTO without that getter.
 
 #### Bean Validation
 
@@ -305,7 +325,8 @@ A tool is not a REST resource: its parameters and results are JSON described by 
 | --- | --- |
 | `LocalDate`, `LocalDateTime`, `Instant`, `OffsetDateTime`, `Duration`, `UUID`, `URI`, `java.util.Date` and the other types of "Dates, times and other values as text" | Use the type as it is. Say what the clients should send in `@McpParam(description = ...)` when it is not obvious (the time zone of a `LocalDateTime`) |
 | `Calendar`, `URL`, `java.sql` types other than `Date` and `Timestamp` | Convert to `Instant`, `URI` or a `String` yourself |
-| A JPA entity or other POJO | A `record` with the fields the model needs, filled by your code. Do not return entities: lazy collections and back-references do not belong in a result |
+| A POJO or DTO with getters | Return it: the properties are its getters and public fields (see "Beans as results"). Parameters are still records |
+| A JPA entity | A `record` or a DTO with the fields the model needs, filled by your code. A lazy-loading proxy and a bean that contains itself are refused with a message, and a getter that loads a collection loads it |
 | A `List` as the result | Works (the result is text containing the JSON array); to get structured content and an `outputSchema`, return a record that holds the list |
 | A `jakarta.ws.rs.core.Response` | Return its entity, and throw `ToolExecutionException` for an error status |
 | `NotFoundException` and other exceptions | A `NotFoundException` (any JAX-RS exception with a 4xx status) and a `ConstraintViolationException` show their message to the model. For your own exceptions write a `ToolExceptionMapper` bean (see "When a tool throws"), or throw `ToolExecutionException("Ticket 42 does not exist")`. Any other exception is logged and replaced by a generic message, so the model cannot learn from it |

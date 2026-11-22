@@ -55,7 +55,7 @@ public final class AnnotatedToolHandler implements McpToolHandler {
         this.scopes       = Set.copyOf(new LinkedHashSet<>(List.of(tool.scopes())));
         this.bindings     = bind(method, where);
         this.inputSchema  = inputSchema(bindings, where);
-        this.outputSchema = ResultMapper.hasOutputSchema(method.getReturnType()) ? SchemaGenerator.schemaFor(method.getGenericReturnType()) : null;
+        this.outputSchema = ResultMapper.hasOutputSchema(method.getReturnType()) ? SchemaGenerator.schemaForResult(method.getGenericReturnType()) : null;
         this.annotations  = annotations(tool);
         this.icons        = Descriptors.icons(tool.icons(), where);
         this.meta         = Descriptors.meta(tool.meta(), where);

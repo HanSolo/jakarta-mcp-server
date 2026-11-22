@@ -6,10 +6,13 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Describes a parameter of an {@link McpTool} method, or a component of a record used as a parameter or result. */
+/**
+ * Describes a parameter of an {@link McpTool} method, or a component of a record used as a parameter or result. On a getter or a public
+ * field of a bean that a tool returns, only {@link #name()} and {@link #description()} count.
+ */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.PARAMETER, ElementType.RECORD_COMPONENT})
+@Target({ElementType.PARAMETER, ElementType.RECORD_COMPONENT, ElementType.METHOD, ElementType.FIELD})
 public @interface McpParam {
 
     /** Property name; defaults to the Java name. Only needed when the code was compiled without {@code -parameters}. */
